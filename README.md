@@ -4,6 +4,8 @@
 
 WaLiOffice 将 AI Agent 能力与办公文档生成深度结合：用户在对话中描述需求，Agent 自动拆解任务、调用工具、生成产物，全程 SSE 流式响应，实时展示思考和生成过程。生产部署只需一个 Rust 二进制（前端静态资源内嵌），开箱即用。
 
+你也可以选择安装 Deepseek Harness Plugin [https://github.com/fuzhengwei/walioffice-dsh-plugin](https://github.com/fuzhengwei/walioffice-dsh-plugin)
+
 ## ✨ 功能特性
 
 - **AI 对话驱动**：基于 ReAct 循环的 Agent 引擎，支持多轮对话、上下文压缩、自动工具编排
