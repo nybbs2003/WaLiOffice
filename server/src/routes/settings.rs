@@ -8,6 +8,7 @@ use crate::db::settings_repo;
 use crate::error::AppError;
 use crate::models::{AppSettings, BasicSettings, LlmProfileConfig, McpServerConfig, NasConfig, MediaProfileConfig};
 use crate::state;
+use crate::agent::tools::agnes_media::build_endpoint;
 use eventsource_stream::Eventsource;
 use futures::StreamExt;
 
@@ -820,7 +821,7 @@ async fn test_text_capability(
         stream: Some(false),
     };
 
-    let endpoint = format!("{base_url}/chat/completions");
+    let endpoint = build_endpoint(base_url, "chat/completions");
     let resp = client
         .post(&endpoint)
         .header("Authorization", format!("Bearer {}", api_key.trim()))
@@ -895,12 +896,12 @@ async fn test_image_capability(
         .build()
         .map_err(|e| AppError::Internal(anyhow::anyhow!("构建 HTTP 客户端失败: {e}")))?;
 
-    // 极小参数：1 张最小尺寸
-    let endpoint = format!("{base_url}/v1/images/generations");
+    // 极小参数：1 张最小尺寸（火山方舟要求 ≥ 921600 像素，用 1280x720 兼容）
+    let endpoint = build_endpoint(base_url, "images/generations");
     let body = json!({
         "model": model,
         "prompt": "a single red circle",
-        "size": "256x256",
+        "size": "1280x720",
         "n": 1,
     });
 
@@ -964,7 +965,7 @@ async fn test_video_capability(
         .build()
         .map_err(|e| AppError::Internal(anyhow::anyhow!("构建 HTTP 客户端失败: {e}")))?;
 
-    let endpoint = format!("{base_url}/v1/videos");
+    let endpoint = build_endpoint(base_url, "videos");
     let body = json!({
         "model": model,
         "prompt": "a single red circle",

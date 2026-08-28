@@ -345,7 +345,7 @@ impl OfficeTool for ImagePromptTool {
             Err(err) => return ToolResult::err(err.to_string()),
         };
         let image_model = agnes_image_model(&ctx.user_id).await;
-        let endpoint = credentials.endpoint("/v1/images/generations");
+        let endpoint = credentials.endpoint("images/generations");
         let client = match http_client(Duration::from_secs(240)) {
             Ok(client) => client,
             Err(err) => return ToolResult::err(format!("初始化 Agnes 客户端失败: {err}")),

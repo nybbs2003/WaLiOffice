@@ -850,7 +850,7 @@ impl OfficeTool for VideoGenerateTool {
         }
 
         // ---- 提交创建任务 ----
-        let create_url = credentials.endpoint("/v1/videos");
+        let create_url = credentials.endpoint("videos");
         let create_response = match post_json::<CreateVideoResponse>(
             &client,
             &create_url,
@@ -871,7 +871,7 @@ impl OfficeTool for VideoGenerateTool {
 
         // V2.5: 使用 id 作为查询标识
         let video_task_id = create_response.id.clone();
-        let poll_url = credentials.endpoint(&format!("/v1/videos/{}", urlencoding::encode(&video_task_id)));
+        let poll_url = credentials.endpoint(&format!("videos/{}", urlencoding::encode(&video_task_id)));
         let deadline = Instant::now() + Duration::from_secs(480);
         let mut latest_progress = create_response.progress.unwrap_or(0);
 

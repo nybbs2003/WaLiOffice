@@ -300,7 +300,7 @@ impl OfficeTool for VideoBatchGenerateTool {
             }
 
             // ---- 提交任务 ----
-            let create_url = credentials.endpoint("/v1/videos");
+            let create_url = credentials.endpoint("videos");
             let create_resp: CreateVideoResponse = match post_json(&client, &create_url, &credentials, &request_body).await {
                 Ok(r) => r,
                 Err(err) => {
@@ -329,7 +329,7 @@ impl OfficeTool for VideoBatchGenerateTool {
             };
 
             let task_id = create_resp.id.clone();
-            let poll_url = credentials.endpoint(&format!("/v1/videos/{}", urlencoding::encode(&task_id)));
+            let poll_url = credentials.endpoint(&format!("videos/{}", urlencoding::encode(&task_id)));
             let deadline = Instant::now() + Duration::from_secs(480);
             let mut latest_progress = create_resp.progress.unwrap_or(0);
 
