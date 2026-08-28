@@ -2,6 +2,8 @@ import { useEffect, useState } from 'react'
 import { X, Download, ChevronLeft, ChevronRight, FileText, FileSpreadsheet, FileType, FileCode, File as FileIcon, ChevronDown, Play } from 'lucide-react'
 import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
+import { Prism as SyntaxHighlighter } from 'react-syntax-highlighter'
+import { oneLight } from 'react-syntax-highlighter/dist/esm/styles/prism'
 import { fileApi } from '@/api'
 import { useAuthStore } from '@/stores/auth-store'
 import type { FileItem } from '@/types'
@@ -410,7 +412,62 @@ export function FilePreviewModal({ file, onClose, onPrev, onNext, onDownload }: 
       return (
         <div className="mx-auto max-w-4xl w-full">
           <div className="rounded-2xl border border-surface-200 bg-white p-8 shadow-sm">
-            <ReactMarkdown remarkPlugins={[remarkGfm]}>{preview.text}</ReactMarkdown>
+            <ReactMarkdown
+              remarkPlugins={[remarkGfm]}
+              components={{
+                h1: ({ children }) => <h1 className="mb-4 text-2xl font-bold tracking-tight text-surface-950">{children}</h1>,
+                h2: ({ children }) => <h2 className="mb-3 mt-6 border-b border-surface-200 pb-2 text-xl font-semibold text-surface-900">{children}</h2>,
+                h3: ({ children }) => <h3 className="mb-2 mt-5 text-lg font-semibold text-surface-900">{children}</h3>,
+                p: ({ children }) => <p className="my-2.5 text-sm leading-7 text-surface-700">{children}</p>,
+                strong: ({ children }) => <strong className="font-semibold text-surface-950">{children}</strong>,
+                a: ({ href, children }) => (
+                  <a href={href} target="_blank" rel="noreferrer" className="font-medium text-primary-600 underline decoration-primary-200 underline-offset-4 hover:text-primary-700">{children}</a>
+                ),
+                ul: ({ children }) => <ul className="my-3 list-disc space-y-1.5 pl-6 text-sm leading-7 text-surface-700">{children}</ul>,
+                ol: ({ children }) => <ol className="my-3 list-decimal space-y-1.5 pl-6 text-sm leading-7 text-surface-700">{children}</ol>,
+                blockquote: ({ children }) => (
+                  <blockquote className="my-4 rounded-r-2xl border-l-4 border-primary-200 bg-primary-50/70 px-4 py-3 text-sm leading-7 text-surface-700">{children}</blockquote>
+                ),
+                hr: () => <hr className="my-6 border-surface-200" />,
+                table: ({ children }) => (
+                  <div className="my-4 overflow-x-auto rounded-2xl border border-surface-200">
+                    <table className="min-w-full border-collapse bg-white text-sm">{children}</table>
+                  </div>
+                ),
+                thead: ({ children }) => <thead className="bg-surface-50 text-surface-800">{children}</thead>,
+                tr: ({ children }) => <tr className="border-b border-surface-200 last:border-b-0">{children}</tr>,
+                th: ({ children }) => <th className="px-4 py-2.5 text-left font-semibold">{children}</th>,
+                td: ({ children }) => <td className="px-4 py-2.5 align-top text-surface-700">{children}</td>,
+                pre: ({ children }) => <>{children}</>,
+                code: ({ className, children }) => {
+                  const raw = String(children).replace(/\n$/, '')
+                  const match = /language-([\w-]+)/.exec(className || '')
+                  const isBlock = Boolean(match) || raw.includes('\n')
+                  if (isBlock) {
+                    return (
+                      <div className="my-4 overflow-hidden rounded-2xl border border-surface-200 shadow-sm">
+                        <div className="flex items-center justify-between border-b border-surface-200 bg-surface-50 px-4 py-1.5 text-[11px] font-medium text-surface-500">
+                          <span>{match?.[1] || 'code'}</span>
+                          <span>代码块</span>
+                        </div>
+                        <SyntaxHighlighter
+                          language={match?.[1]}
+                          style={oneLight}
+                          customStyle={{ margin: 0, padding: '14px 16px', background: '#fafaf9', fontSize: '12px', lineHeight: '1.6' }}
+                          codeTagProps={{ style: { fontFamily: 'SFMono-Regular, ui-monospace, Menlo, Monaco, Consolas, monospace' } }}
+                          wrapLongLines
+                        >
+                          {raw}
+                        </SyntaxHighlighter>
+                      </div>
+                    )
+                  }
+                  return <code className="rounded-md bg-surface-100 px-1.5 py-0.5 text-[0.9em] text-surface-900">{raw}</code>
+                },
+              }}
+            >
+              {preview.text}
+            </ReactMarkdown>
           </div>
         </div>
       )

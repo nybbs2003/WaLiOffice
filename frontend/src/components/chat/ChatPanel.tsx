@@ -1,6 +1,8 @@
 import * as DropdownMenu from '@radix-ui/react-dropdown-menu'
 import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
+import { Prism as SyntaxHighlighter } from 'react-syntax-highlighter'
+import { oneLight } from 'react-syntax-highlighter/dist/esm/styles/prism'
 import { AlertCircle, Check, Circle, Download, Eye, Files, Loader2, Send, Sparkles, Square, ChevronRight, ChevronDown, Terminal, Wrench, FileEdit, Sheet, PenTool, Image as ImageIcon, LayoutDashboard, Bot, Paperclip, X, Clapperboard, MessageSquarePlus } from 'lucide-react'
 import { AGENT_TOOLS, getAgentTool } from '@/config/agent-tools'
 import { useRef, useState, useEffect, Fragment, useMemo } from 'react'
@@ -79,9 +81,32 @@ function renderMarkdown(content: string) {
         td: ({ children }) => <td className="px-3 py-2 align-top text-surface-700">{children}</td>,
         code: ({ className, children }) => {
           const raw = String(children).replace(/\n$/, '')
-          const isBlock = /language-/.test(className || '') || raw.includes('\n')
+          const match = /language-([\w-]+)/.exec(className || '')
+          const isBlock = Boolean(match) || raw.includes('\n')
           if (isBlock) {
-            return <code className="block overflow-auto rounded-2xl bg-surface-950 px-4 py-3 text-xs text-white shadow-inner">{raw}</code>
+            return (
+              <div className="my-2 overflow-hidden rounded-2xl border border-surface-200 shadow-sm">
+                <div className="flex items-center justify-between border-b border-surface-200 bg-surface-50 px-3 py-1.5 text-[10px] font-medium text-surface-500">
+                  <span>{match?.[1] || 'code'}</span>
+                  <span>代码块</span>
+                </div>
+                <SyntaxHighlighter
+                  language={match?.[1]}
+                  style={oneLight}
+                  customStyle={{
+                    margin: 0,
+                    padding: '12px 16px',
+                    background: '#fafaf9',
+                    fontSize: '12px',
+                    lineHeight: '1.6',
+                  }}
+                  codeTagProps={{ style: { fontFamily: 'SFMono-Regular, ui-monospace, Menlo, Monaco, Consolas, monospace' } }}
+                  wrapLongLines
+                >
+                  {raw}
+                </SyntaxHighlighter>
+              </div>
+            )
           }
           return <code className="rounded-md bg-surface-100 px-1.5 py-0.5 text-[0.9em] text-surface-800">{raw}</code>
         },
