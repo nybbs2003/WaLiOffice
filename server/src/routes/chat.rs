@@ -61,6 +61,16 @@ fn format_attachment_context(attachments: &[ChatAttachment]) -> String {
         .iter()
         .enumerate()
         .filter_map(|(index, attachment)| {
+            if attachment.kind == "video" {
+                // 视频附件：作为视觉输入随本轮消息发送
+                return Some(format!(
+                    "附件 {}（视频）\n- 文件名：{}\n- MIME：{}\n- 大小：{} 字节\n- 说明：视频内容已作为视觉输入随本轮消息一并发送，请直接观察视频内容回答用户问题。",
+                    index + 1,
+                    attachment.name,
+                    attachment.mime_type,
+                    attachment.size,
+                ));
+            }
             if attachment.kind == "text" {
                 let text = attachment
                     .text_content
@@ -193,7 +203,7 @@ fn contains_any(text: &str, keywords: &[&str]) -> bool {
 fn has_image_attachment(req: &ChatRequest) -> bool {
     req.attachments
         .as_deref()
-        .map(|items| items.iter().any(|item| item.kind == "image"))
+        .map(|items| items.iter().any(|item| item.kind == "image" || item.kind == "video"))
         .unwrap_or(false)
 }
 

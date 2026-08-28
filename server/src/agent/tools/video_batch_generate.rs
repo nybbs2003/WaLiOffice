@@ -71,6 +71,15 @@ struct QueryVideoResponse {
     model: Option<String>,
     #[serde(default)]
     error: Option<serde_json::Value>,
+    /// 智谱 BigModel：task_status（PROCESSING/SUCCESS/FAIL）
+    #[serde(default)]
+    task_status: String,
+    /// 智谱 BigModel：video_result[].url
+    #[serde(default)]
+    video_result: Option<Vec<serde_json::Value>>,
+    /// 火山方舟：content.video_url
+    #[serde(default)]
+    content: Option<serde_json::Value>,
 }
 
 #[async_trait]
@@ -214,6 +223,7 @@ impl OfficeTool for VideoBatchGenerateTool {
             let (size_label, _width, _height) = infer_size_label(aspect_ratio);
 
             let is_volc = credentials.video_vendor() == crate::agent::tools::agnes_media::VideoVendor::Volcengine;
+            let is_zhipu = credentials.video_vendor() == crate::agent::tools::agnes_media::VideoVendor::Zhipu;
 
             let mut request_body = if is_volc {
                 // 火山方舟 Seedance：content 数组（text + 可选图片参考）
@@ -230,6 +240,18 @@ impl OfficeTool for VideoBatchGenerateTool {
                     "duration": shot.seconds,
                     "ratio": aspect_ratio,
                 })
+            } else if is_zhipu {
+                // 智谱 BigModel CogVideoX：prompt + size + duration + image_url
+                let mut body = json!({
+                    "model": video_model.as_str(),
+                    "prompt": shot.prompt.clone(),
+                    "size": "1280x720",
+                    "duration": 5,
+                });
+                if !shot.reference_images.is_empty() {
+                    body["image_url"] = json!(shot.reference_images[0].clone());
+                }
+                body
             } else {
                 // Agnes V2.5
                 json!({
@@ -248,7 +270,7 @@ impl OfficeTool for VideoBatchGenerateTool {
 
             // 模式专用参数（仅 Agnes 支持）
             match shot.mode.as_str() {
-                "keyframe" if !is_volc => {
+                "keyframe" if !is_volc && !is_zhipu => {
                     if let Some(ff) = &shot.first_frame {
                         if !ff.is_empty() {
                             request_body["first_frame"] = json!(ff);
@@ -264,7 +286,7 @@ impl OfficeTool for VideoBatchGenerateTool {
                         request_body["audios"] = json!(shot.audio_urls);
                     }
                 }
-                "reference" if !is_volc => {
+                "reference" if !is_volc && !is_zhipu => {
                     let mut refs = shot.reference_images.clone();
                     // 链式一致性：将上一镜头视频 URL 加入参考
                     if chain_consistency {
@@ -296,7 +318,7 @@ impl OfficeTool for VideoBatchGenerateTool {
                         }
                     }
                 }
-                _ if !is_volc => {
+                _ if !is_volc && !is_zhipu => {
                     // text 模式也可以使用音频参考
                     if !shot.audio_urls.is_empty() {
                         request_body["audios"] = json!(shot.audio_urls);
@@ -374,22 +396,48 @@ impl OfficeTool for VideoBatchGenerateTool {
                 };
 
                 latest_progress = status_resp.progress.unwrap_or(latest_progress);
+                let status_str = if status_resp.task_status.is_empty() {
+                    status_resp.status.clone()
+                } else {
+                    status_resp.task_status.clone()
+                };
                 ctx.send("state_update", json!({
                     "phase": "running",
                     "step": format!("镜头 {shot_num}/{total_shots} 生成中"),
-                    "detail": format!("《{}》状态：{}（{}%）", shot.title, status_resp.status, latest_progress),
+                    "detail": format!("《{}》状态：{}（{}%）", shot.title, status_str, latest_progress),
                     "current_shot": shot_num,
                     "total_shots": total_shots,
                     "progress": latest_progress,
                     "at": chrono::Utc::now().to_rfc3339(),
                 }));
 
-                match status_resp.status.as_str() {
-                    "completed" => {
-                        shot_video_url = status_resp.url.filter(|u| !u.trim().is_empty());
+                match status_str.as_str() {
+                    "completed" | "succeeded" | "SUCCESS" => {
+                        shot_video_url = status_resp
+                            .url
+                            .filter(|u| !u.trim().is_empty())
+                            .or_else(|| {
+                                status_resp
+                                    .content
+                                    .as_ref()
+                                    .and_then(|c| c.get("video_url"))
+                                    .and_then(|v| v.as_str())
+                                    .map(|s| s.to_string())
+                                    .filter(|u| !u.trim().is_empty())
+                            })
+                            .or_else(|| {
+                                status_resp
+                                    .video_result
+                                    .as_ref()
+                                    .and_then(|arr| arr.first())
+                                    .and_then(|item| item.get("url"))
+                                    .and_then(|v| v.as_str())
+                                    .map(|s| s.to_string())
+                                    .filter(|u| !u.trim().is_empty())
+                            });
                         break;
                     }
-                    "failed" | "error" | "cancelled" => {
+                    "failed" | "error" | "cancelled" | "FAIL" => {
                         shot_failed = true;
                         break;
                     }

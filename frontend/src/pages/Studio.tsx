@@ -883,7 +883,27 @@ export default function Studio() {
     const isMarkdown = lowerName.endsWith('.md') || file.type === 'text/markdown'
     const isText = lowerName.endsWith('.txt') || file.type === 'text/plain'
     const isImage = file.type.startsWith('image/')
+    const isVideo = file.type.startsWith('video/')
     const isOfficeText = /\.(docx|xlsx|pptx|pdf|csv|tsv|json)$/i.test(file.name)
+
+    if (isVideo) {
+      // 视频附件：读成 data_url（后端会走 Files API 上传拿 file_id，避免超限）
+      // 限制：单视频不超过 100MB（Kimi Files API 单文件上限）
+      const MAX_VIDEO_BYTES = 100 * 1024 * 1024
+      if (file.size > MAX_VIDEO_BYTES) {
+        showToast(`视频「${file.name}」超过 100MB 限制，请压缩后再上传。`, 'error')
+        return null
+      }
+      const dataUrl = await readFileAsDataUrl(file)
+      return {
+        id: `${Date.now()}-${crypto.randomUUID()}`,
+        name: file.name,
+        kind: 'video',
+        mime_type: file.type || 'video/mp4',
+        size: file.size,
+        data_url: dataUrl,
+      }
+    }
 
     if (isMarkdown || isText) {
       const textContent = await readFileAsText(file)
@@ -935,7 +955,7 @@ export default function Studio() {
       const nextItems = (await Promise.all(files.map(buildAttachmentFromFile))).filter(Boolean) as ChatAttachment[]
       const unsupported = files.length - nextItems.length
       if (unsupported > 0) {
-        showToast('目前支持上传 md、txt、csv、json、docx、xlsx、pptx、pdf 和图片文件。', 'error')
+        showToast('目前支持上传 md、txt、csv、json、docx、xlsx、pptx、pdf、图片和视频文件。', 'error')
       }
       if (nextItems.length === 0) return
 
@@ -2122,7 +2142,7 @@ export default function Studio() {
       <input
         ref={attachmentInputRef}
         type="file"
-        accept=".md,.txt,.csv,.tsv,.json,.docx,.xlsx,.pptx,.pdf,text/markdown,text/plain,text/csv,application/json,application/pdf,application/vnd.openxmlformats-officedocument.wordprocessingml.document,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet,application/vnd.openxmlformats-officedocument.presentationml.presentation,image/*"
+        accept=".md,.txt,.csv,.tsv,.json,.docx,.xlsx,.pptx,.pdf,text/markdown,text/plain,text/csv,application/json,application/pdf,application/vnd.openxmlformats-officedocument.wordprocessingml.document,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet,application/vnd.openxmlformats-officedocument.presentationml.presentation,image/*,video/*"
         multiple
         className="hidden"
         onChange={handleAttachmentChange}

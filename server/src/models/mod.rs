@@ -131,6 +131,9 @@ pub struct ChatAttachment {
     pub text_content: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub data_url: Option<String>,
+    /// 通过 Files API 上传后得到的 file_id（大图片/视频，避免 base64 内联超限）
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub file_id: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

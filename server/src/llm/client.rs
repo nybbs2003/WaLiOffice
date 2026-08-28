@@ -12,6 +12,40 @@ use crate::models::{ChatAttachment, ChatMessage, LlmProfileConfig};
 static API_KEY_ROUND_ROBIN: Lazy<Mutex<HashMap<String, usize>>> =
     Lazy::new(|| Mutex::new(HashMap::new()));
 
+/// 文本（推理）模型厂商类型（用于 Files API 分派）
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum TextVendor {
+    /// Moonshot Kimi（moonshot.cn）：/v1/files，purpose=file-extract/image/video
+    Kimi,
+    /// DeepSeek（api.deepseek.com）：/files，purpose=user_data（仅图片）
+    Deepseek,
+    /// 其他 OpenAI 兼容（默认）：尝试 /files
+    OpenAi,
+}
+
+/// 根据 base_url 域名识别文本模型厂商
+pub fn detect_text_vendor(base_url: &str) -> TextVendor {
+    let base = base_url.trim().to_lowercase();
+    if base.contains("moonshot") || base.contains("kimi") {
+        TextVendor::Kimi
+    } else if base.contains("deepseek") {
+        TextVendor::Deepseek
+    } else {
+        TextVendor::OpenAi
+    }
+}
+
+/// 超过此大小的图片走 Files API 上传（避免 base64 内联超请求体限制）
+const LARGE_ATTACHMENT_BYTES: usize = 2 * 1024 * 1024; // 2 MiB
+
+/// 解码 base64 数据 URL 的字节（去掉 data:xxx;base64, 前缀）
+fn base64_decode(b64: &str) -> Option<Vec<u8>> {
+    use base64::Engine;
+    base64::engine::general_purpose::STANDARD
+        .decode(b64.trim())
+        .ok()
+}
+
 fn single_key_vec(api_key: &str) -> Vec<String> {
     let key = api_key.trim();
     if key.is_empty() {
@@ -187,6 +221,67 @@ impl LlmClient {
         &self.model
     }
 
+    /// 文本模型厂商
+    pub fn text_vendor(&self) -> TextVendor {
+        detect_text_vendor(&self.base_url)
+    }
+
+    /// 通过 Files API 上传文件（按厂商分派），返回 file_id。
+    /// 用于大图片/视频，避免 base64 内联超请求体限制。
+    pub async fn upload_file(
+        &self,
+        filename: &str,
+        bytes: &[u8],
+        kind: &str, // image | video | text
+    ) -> Result<String> {
+        let key = self.api_keys.first().cloned().unwrap_or_default();
+        let vendor = self.text_vendor();
+
+        let (url, purpose) = match vendor {
+            TextVendor::Kimi => {
+                let purpose = match kind {
+                    "video" => "video",
+                    "image" => "image",
+                    _ => "file-extract",
+                };
+                (format!("{}/files", self.base_url), purpose)
+            }
+            TextVendor::Deepseek => {
+                (format!("{}/files", self.base_url), "user_data")
+            }
+            TextVendor::OpenAi => {
+                (format!("{}/files", self.base_url), "user_data")
+            }
+        };
+
+        // 用 multipart/form-data 上传
+        let part = reqwest::multipart::Part::bytes(bytes.to_vec())
+            .file_name(filename.to_string());
+        let form = reqwest::multipart::Form::new()
+            .text("purpose", purpose.to_string())
+            .part("file", part);
+
+        let resp = self
+            .http
+            .post(&url)
+            .header("Authorization", format!("Bearer {key}"))
+            .multipart(form)
+            .send()
+            .await?;
+
+        if !resp.status().is_success() {
+            let status = resp.status();
+            let body = resp.text().await.unwrap_or_default();
+            return Err(anyhow!("文件上传失败（HTTP {}）: {}", status.as_u16(), body.chars().take(300).collect::<String>()));
+        }
+
+        let json: serde_json::Value = resp.json().await?;
+        json.get("id")
+            .and_then(|v| v.as_str())
+            .map(|s| s.to_string())
+            .ok_or_else(|| anyhow!("文件上传响应缺少 id 字段"))
+    }
+
     /// 非流式 chat（带可选工具）
     pub async fn chat(
         &self,
@@ -202,10 +297,54 @@ impl LlmClient {
         tools: Option<&[FunctionDef]>,
         user_attachments: Option<&[ChatAttachment]>,
     ) -> Result<ChatCompletionResponse> {
-        let has_image_attachments = has_image_attachments(user_attachments);
+        // 上传大图片/视频到 Files API 拿 file_id（按厂商分派），避免 base64 内联超限
+        let mut processed: Option<Vec<ChatAttachment>> = None;
+        if let Some(attachments) = user_attachments {
+            let vendor_str = match self.text_vendor() {
+                TextVendor::Kimi => "kimi",
+                TextVendor::Deepseek => "deepseek",
+                TextVendor::OpenAi => "openai",
+            };
+            let mut updated = attachments.to_vec();
+            for att in updated.iter_mut() {
+                if att.file_id.is_some() {
+                    continue;
+                }
+                let should_upload = att.kind == "video"
+                    || (att.kind == "image" && att.size > LARGE_ATTACHMENT_BYTES);
+                if !should_upload {
+                    continue;
+                }
+                // 从 data_url 提取字节（去掉 data:xxx;base64, 前缀）
+                let bytes = att
+                    .data_url
+                    .as_deref()
+                    .and_then(|du| du.split_once(',').map(|(_, b64)| b64))
+                    .and_then(|b64| base64_decode(b64));
+                if let Some(bytes) = bytes {
+                    match self.upload_file(&att.name, &bytes, &att.kind).await {
+                        Ok(file_id) => {
+                            att.file_id = Some(file_id);
+                        }
+                        Err(err) => {
+                            tracing::warn!("文件上传 Files API 失败，回退 base64 内联: {err}");
+                        }
+                    }
+                }
+            }
+            processed = Some(updated);
+        }
+
+        let attachments_ref = processed.as_deref().or(user_attachments);
+        let has_image_attachments = has_multimodal_attachments(attachments_ref);
+        let vendor_str = match self.text_vendor() {
+            TextVendor::Kimi => "kimi",
+            TextVendor::Deepseek => "deepseek",
+            TextVendor::OpenAi => "openai",
+        };
         let req = ChatCompletionRequest {
             model: self.model.clone(),
-            messages: build_request_messages(messages, user_attachments),
+            messages: build_request_messages(messages, attachments_ref, vendor_str),
             tools: tools.map(|t| t.to_vec()),
             tool_choice: None,
             temperature: Some(0.7),
@@ -220,7 +359,7 @@ impl LlmClient {
                 );
                 let vision_only_req = ChatCompletionRequest {
                     model: self.model.clone(),
-                    messages: build_request_messages(messages, user_attachments),
+                    messages: build_request_messages(messages, attachments_ref, vendor_str),
                     tools: None,
                     tool_choice: None,
                     temperature: Some(0.7),
@@ -262,7 +401,7 @@ impl LlmClient {
         });
         let fallback_req = ChatCompletionRequest {
             model: self.model.clone(),
-            messages: build_request_messages(&fallback_messages, None),
+            messages: build_request_messages(&fallback_messages, None, "openai"),
             tools: tools.map(|t| t.to_vec()),
             tool_choice: None,
             temperature: Some(0.7),
@@ -362,9 +501,10 @@ impl LlmClient {
 fn build_request_messages(
     messages: &[ChatMessage],
     user_attachments: Option<&[ChatAttachment]>,
+    text_vendor: &str,
 ) -> Vec<RequestMessage> {
     let latest_user_index = user_attachments
-        .filter(|items| has_image_attachments(Some(items)))
+        .filter(|items| has_multimodal_attachments(Some(items)))
         .and_then(|_| messages.iter().rposition(|msg| msg.role == "user"));
 
     messages
@@ -373,7 +513,7 @@ fn build_request_messages(
         .map(
             |(index, msg)| match (Some(index) == latest_user_index, user_attachments) {
                 (true, Some(attachments)) => {
-                    RequestMessage::from_multimodal_user_message(msg, attachments)
+                    RequestMessage::from_multimodal_user_message(msg, attachments, text_vendor)
                 }
                 _ => RequestMessage::from_chat_message(msg),
             },
@@ -381,19 +521,29 @@ fn build_request_messages(
         .collect()
 }
 
-fn has_image_attachments(user_attachments: Option<&[ChatAttachment]>) -> bool {
+/// 是否含多模态附件（图片/视频，data_url 内联或 file_id 引用）
+fn has_multimodal_attachments(user_attachments: Option<&[ChatAttachment]>) -> bool {
     user_attachments
         .map(|items| {
             items.iter().any(|item| {
-                item.kind == "image"
-                    && item
+                (item.kind == "image" || item.kind == "video")
+                    && (item
                         .data_url
                         .as_deref()
                         .map(|value| !value.trim().is_empty())
                         .unwrap_or(false)
+                        || item
+                            .file_id
+                            .as_deref()
+                            .map(|value| !value.trim().is_empty())
+                            .unwrap_or(false))
             })
         })
         .unwrap_or(false)
+}
+
+fn has_image_attachments(user_attachments: Option<&[ChatAttachment]>) -> bool {
+    has_multimodal_attachments(user_attachments)
 }
 
 fn is_chat_compatible_model(model: &str) -> bool {

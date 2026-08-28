@@ -30,6 +30,7 @@ impl AgnesCredentials {
     pub fn video_create_endpoint(&self) -> String {
         match self.video_vendor() {
             VideoVendor::Volcengine => self.endpoint("contents/generations/tasks"),
+            VideoVendor::Zhipu => self.endpoint("videos/generations"),
             VideoVendor::Agnes => self.endpoint("videos"),
         }
     }
@@ -38,6 +39,7 @@ impl AgnesCredentials {
     pub fn video_query_endpoint(&self, task_id: &str) -> String {
         match self.video_vendor() {
             VideoVendor::Volcengine => self.endpoint(&format!("contents/generations/tasks/{}", urlencoding::encode(task_id))),
+            VideoVendor::Zhipu => self.endpoint(&format!("async-result/{}", urlencoding::encode(task_id))),
             VideoVendor::Agnes => self.endpoint(&format!("videos/{}", urlencoding::encode(task_id))),
         }
     }
@@ -157,6 +159,8 @@ pub enum VideoVendor {
     Agnes,
     /// 火山方舟（volces.com / ark.cn）：/api/v3/contents/generations/tasks 异步任务
     Volcengine,
+    /// 智谱 BigModel（bigmodel.cn / z.ai）：/api/paas/v4/videos/generations 异步任务
+    Zhipu,
 }
 
 /// 根据 base_url 域名自动识别视频厂商
@@ -164,6 +168,8 @@ pub fn detect_video_vendor(base_url: &str) -> VideoVendor {
     let base = base_url.trim().to_lowercase();
     if base.contains("volces.com") || base.contains("volcengine") || base.contains("ark.cn") {
         VideoVendor::Volcengine
+    } else if base.contains("bigmodel.cn") || base.contains("z.ai") || base.contains("zhipu") {
+        VideoVendor::Zhipu
     } else {
         VideoVendor::Agnes
     }

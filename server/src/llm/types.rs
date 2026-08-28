@@ -28,6 +28,7 @@ impl RequestMessage {
     pub fn from_multimodal_user_message(
         msg: &crate::models::ChatMessage,
         attachments: &[crate::models::ChatAttachment],
+        text_vendor: &str,
     ) -> Self {
         let mut content = Vec::new();
 
@@ -38,14 +39,56 @@ impl RequestMessage {
             }));
         }
 
-        for attachment in attachments.iter().filter(|item| {
-            item.kind == "image"
-                && item
-                    .data_url
-                    .as_deref()
-                    .map(|value| !value.trim().is_empty())
-                    .unwrap_or(false)
-        }) {
+        for attachment in attachments.iter() {
+            // 视频附件：video_url 块（Kimi 支持 ms://file-id 或 URL；DeepSeek 暂不支持视频）
+            if attachment.kind == "video" {
+                if let Some(file_id) = attachment.file_id.as_deref().filter(|s| !s.is_empty()) {
+                    let url = if text_vendor == "kimi" {
+                        format!("ms://{file_id}")
+                    } else {
+                        file_id.to_string()
+                    };
+                    content.push(json!({
+                        "type": "video_url",
+                        "video_url": { "url": url },
+                    }));
+                } else if let Some(url) = attachment.data_url.as_deref().filter(|s| !s.is_empty()) {
+                    content.push(json!({
+                        "type": "video_url",
+                        "video_url": { "url": url },
+                    }));
+                }
+                continue;
+            }
+
+            // 图片附件
+            if attachment.kind != "image" {
+                continue;
+            }
+
+            // 有 file_id：按厂商引用（Kimi 用 ms://，DeepSeek 用 file 块）
+            if let Some(file_id) = attachment.file_id.as_deref().filter(|s| !s.is_empty()) {
+                if text_vendor == "deepseek" {
+                    content.push(json!({
+                        "type": "file",
+                        "file_id": file_id,
+                    }));
+                } else if text_vendor == "kimi" {
+                    content.push(json!({
+                        "type": "image_url",
+                        "image_url": { "url": format!("ms://{file_id}") },
+                    }));
+                } else {
+                    // 其他 OpenAI 兼容：file_id 引用
+                    content.push(json!({
+                        "type": "file",
+                        "file_id": file_id,
+                    }));
+                }
+                continue;
+            }
+
+            // 无 file_id：base64/URL 内联
             if let Some(image_url) = normalize_image_url(attachment) {
                 content.push(json!({
                     "type": "image_url",

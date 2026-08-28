@@ -6,11 +6,12 @@ export type ArtifactKind = 'document' | 'markdown' | 'ppt' | 'drawio' | 'sheet' 
 export interface ChatAttachment {
   id: string;
   name: string;
-  kind: 'text' | 'image';
+  kind: 'text' | 'image' | 'video';
   mime_type: string;
   size: number;
   text_content?: string;
   data_url?: string;
+  file_id?: string;
   original_size?: number;
   width?: number;
   height?: number;

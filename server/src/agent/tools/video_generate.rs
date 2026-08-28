@@ -61,6 +61,12 @@ struct QueryVideoResponse {
     error: Option<serde_json::Value>,
     /// 火山方舟 Seedance：视频 URL 在 content.video_url
     content: Option<serde_json::Value>,
+    /// 智谱 BigModel：任务状态在 task_status（PROCESSING/SUCCESS/FAIL）
+    #[serde(default)]
+    task_status: String,
+    /// 智谱 BigModel：视频结果在 video_result[].url
+    #[serde(default)]
+    video_result: Option<Vec<serde_json::Value>>,
 }
 
 #[derive(Debug, Clone, serde::Deserialize)]
@@ -923,21 +929,28 @@ impl OfficeTool for VideoGenerateTool {
             };
 
             latest_progress = status_response.progress.unwrap_or(latest_progress);
+            // 智谱用 task_status（PROCESSING/SUCCESS/FAIL），Agnes/火山用 status
+            let status_str = if status_response.task_status.is_empty() {
+                status_response.status.clone()
+            } else {
+                status_response.task_status.clone()
+            };
             ctx.send(
                 "state_update",
                 json!({
                     "phase": "running",
                     "step": "轮询视频结果",
-                    "detail": format!("视频状态：{}（{}%）", status_response.status, latest_progress),
+                    "detail": format!("视频状态：{}（{}%）", status_str, latest_progress),
                     "at": chrono::Utc::now().to_rfc3339(),
                 }),
             );
 
-            match status_response.status.as_str() {
-                // Agnes 用 completed，火山方舟用 succeeded
-                "completed" | "succeeded" => {
+            match status_str.as_str() {
+                // Agnes 用 completed，火山方舟用 succeeded，智谱用 SUCCESS
+                "completed" | "succeeded" | "SUCCESS" => {
                     // API 实测：url 可能在顶层 url / metadata.url（Agnes），
-                    // 或 content.video_url（火山方舟 Seedance）
+                    // 或 content.video_url（火山方舟 Seedance），
+                    // 或 video_result[].url（智谱 BigModel）
                     let video_url = status_response
                         .url
                         .clone()
@@ -954,6 +967,16 @@ impl OfficeTool for VideoGenerateTool {
                                 .content
                                 .as_ref()
                                 .and_then(|c| c.get("video_url"))
+                                .and_then(|v| v.as_str())
+                                .map(|s| s.to_string())
+                                .filter(|url| !url.trim().is_empty())
+                        })
+                        .or_else(|| {
+                            status_response
+                                .video_result
+                                .as_ref()
+                                .and_then(|arr| arr.first())
+                                .and_then(|item| item.get("url"))
                                 .and_then(|v| v.as_str())
                                 .map(|s| s.to_string())
                                 .filter(|url| !url.trim().is_empty())
@@ -1000,7 +1023,7 @@ impl OfficeTool for VideoGenerateTool {
                         }],
                     );
                 }
-                "failed" | "error" | "cancelled" => {
+                "failed" | "error" | "cancelled" | "FAIL" => {
                     let detail = status_response
                         .error
                         .map(|value| value.to_string())
