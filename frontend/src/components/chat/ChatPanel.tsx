@@ -792,7 +792,7 @@ export function ChatPanel({
                     {artifacts.length} 个 · {artifactTurnGroups.length} 轮
                   </span>
                   <span className="flex h-6 w-6 items-center justify-center rounded-full bg-white/75 text-surface-400 shadow-sm ring-1 ring-black/[0.05]">
-                    <ChevronDown className={`h-3 w-3 transition-transform ${artifactSummaryExpanded ? 'rotate-180' : ''}`} />
+                    <ChevronDown className={`h-3 w-3 transition-transform ${artifactSummaryExpanded ? '' : '-rotate-180'}`} />
                   </span>
                 </div>
               </button>

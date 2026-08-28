@@ -54,6 +54,8 @@ interface PPTState {
   closeTab: (tabId: string) => void;
   switchTab: (tabId: string) => void;
   updateTab: (tabId: string, updates: Partial<ConversationState>) => void;
+  // 函数式定向更新：基于指定 tab 的当前状态计算新状态（支持多 tab 并发写入）
+  updateTabFn: (tabId: string, fn: (tab: TabState) => TabState) => void;
   getTabState: (tabId: string) => TabState | null;
 
   // 状态操作（操作活跃 tab）
@@ -191,6 +193,21 @@ export const usePPTStore = create<PPTState>()(
       const tab = state.tabs[tabId];
       if (!tab) return state;
       const newTab = { ...tab, ...updates };
+      const newTabs = { ...state.tabs, [tabId]: newTab };
+      const result: any = { tabs: newTabs };
+      // 如果更新的是活跃 tab，同步到顶层
+      if (state.activeTabId === tabId) {
+        Object.assign(result, syncFromTab({ ...state, tabs: newTabs }, tabId));
+      }
+      return result;
+    });
+  },
+
+  updateTabFn: (tabId, fn) => {
+    set((state) => {
+      const tab = state.tabs[tabId];
+      if (!tab) return state;
+      const newTab = fn(tab);
       const newTabs = { ...state.tabs, [tabId]: newTab };
       const result: any = { tabs: newTabs };
       // 如果更新的是活跃 tab，同步到顶层
