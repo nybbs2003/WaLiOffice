@@ -67,13 +67,12 @@ export interface SearchProvidersConfig {
   provider: string;
 }
 
-// ===== NAS（懒猫微服 WebDAV）挂载凭据（每用户各自保存） =====
+// ===== NAS（懒猫微服 WebDAV）访问凭据（每用户各自保存） =====
 export interface NasConfig {
   name: string;
   base_url: string;
   username: string;
   password: string;
-  root_path: string;
   enabled: boolean;
 }
 

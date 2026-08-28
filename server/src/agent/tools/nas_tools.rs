@@ -4,7 +4,7 @@ use serde_json::json;
 use crate::agent::tool::{OfficeTool, ToolArtifact, ToolContext, ToolResult};
 use crate::models::NasConfig;
 
-/// 读取当前用户的 NAS 挂载凭据（按 user_id 隔离，多租户互不冲突）
+/// 读取当前用户的 NAS 访问凭据（按 user_id 隔离，多租户互不冲突；纯 HTTP(S) 请求，不挂载文件系统）
 async fn get_nas_config(ctx: &ToolContext) -> anyhow::Result<NasConfig> {
     let pool = crate::state::db_pool();
     let settings = crate::db::settings_repo::find_by_user(&pool, &ctx.user_id)
@@ -13,11 +13,11 @@ async fn get_nas_config(ctx: &ToolContext) -> anyhow::Result<NasConfig> {
     let cfg = settings.nas_config;
     if !cfg.enabled || cfg.base_url.is_empty() {
         return Err(anyhow::anyhow!(
-            "尚未配置 NAS 挂载，请先在「设置 → 数据源」中填写懒猫微服 WebDAV 地址与凭据"
+            "尚未配置 NAS 数据源，请先在「设置 → 数据源」中填写懒猫微服 WebDAV 地址与凭据"
         ));
     }
     if cfg.username.is_empty() {
-        return Err(anyhow::anyhow!("NAS 挂载缺少用户名"));
+        return Err(anyhow::anyhow!("NAS 数据源缺少用户名"));
     }
     Ok(cfg)
 }
@@ -40,28 +40,17 @@ fn join_url(base: &str, path: &str) -> String {
     }
 }
 
-/// 把「相对挂载根」的路径解析为「相对 WebDAV 根」的完整路径：
-/// 先拼上该用户的 root_path（命名空间隔离），再拼用户传入的相对路径。
-/// 例：root_path="/users/alice"，path="docs" → "/users/alice/docs"
-///
-/// 安全：拒绝 `..` 路径穿越，防止用户逃出自己的 root_path 命名空间。
-fn resolve_path(root_path: &str, path: &str) -> anyhow::Result<String> {
-    let root = root_path.trim().trim_matches('/');
+/// 清理用户传入的相对路径：去掉首尾斜杠，拒绝 `..` 穿越。
+/// 路径相对 WebDAV 根（即该懒猫账号自己的文件空间根）。
+fn sanitize_path(path: &str) -> anyhow::Result<String> {
     let rel = path.trim().trim_matches('/');
-
-    // 路径穿越防护：相对路径里不允许出现 .. 段
+    // 路径穿越防护：不允许 .. 段
     for seg in rel.split('/') {
         if seg == ".." {
-            return Err(anyhow::anyhow!("非法路径：不允许使用 '..' 跨越挂载根目录"));
+            return Err(anyhow::anyhow!("非法路径：不允许使用 '..'"));
         }
     }
-
-    Ok(match (root.is_empty(), rel.is_empty()) {
-        (true, true) => String::new(),
-        (true, false) => rel.to_string(),
-        (false, true) => root.to_string(),
-        (false, false) => format!("{}/{}", root, rel),
-    })
+    Ok(rel.to_string())
 }
 
 /// PROPFIND 列目录（Depth: 1），返回 (名称, 是否目录, 大小, 最后修改)
@@ -69,7 +58,7 @@ async fn dav_list(
     cfg: &NasConfig,
     rel_path: &str,
 ) -> anyhow::Result<Vec<serde_json::Value>> {
-    let full_path = match resolve_path(&cfg.root_path, rel_path) { Ok(p) => p, Err(e) => return Err(e) };
+    let full_path = match sanitize_path(rel_path) { Ok(p) => p, Err(e) => return Err(e) };
     let client = dav_client();
     let url = join_url(&cfg.base_url, &full_path);
     let resp = client
@@ -168,7 +157,7 @@ fn parse_propfind_response(body: &str) -> anyhow::Result<Vec<serde_json::Value>>
 
 /// GET 读取文件内容
 async fn dav_read(cfg: &NasConfig, rel_path: &str) -> anyhow::Result<(String, String)> {
-    let full_path = match resolve_path(&cfg.root_path, rel_path) { Ok(p) => p, Err(e) => return Err(e) };
+    let full_path = match sanitize_path(rel_path) { Ok(p) => p, Err(e) => return Err(e) };
     let client = dav_client();
     let url = join_url(&cfg.base_url, &full_path);
     let resp = client
@@ -193,7 +182,7 @@ async fn dav_read(cfg: &NasConfig, rel_path: &str) -> anyhow::Result<(String, St
 
 /// PUT 写入文件
 async fn dav_write(cfg: &NasConfig, rel_path: &str, content: &str) -> anyhow::Result<()> {
-    let full_path = match resolve_path(&cfg.root_path, rel_path) { Ok(p) => p, Err(e) => return Err(e) };
+    let full_path = match sanitize_path(rel_path) { Ok(p) => p, Err(e) => return Err(e) };
     let client = dav_client();
     let url = join_url(&cfg.base_url, &full_path);
     let resp = client
@@ -212,7 +201,7 @@ async fn dav_write(cfg: &NasConfig, rel_path: &str, content: &str) -> anyhow::Re
 
 /// MKCOL 建目录
 async fn dav_mkdir(cfg: &NasConfig, rel_path: &str) -> anyhow::Result<()> {
-    let full_path = match resolve_path(&cfg.root_path, rel_path) { Ok(p) => p, Err(e) => return Err(e) };
+    let full_path = match sanitize_path(rel_path) { Ok(p) => p, Err(e) => return Err(e) };
     let client = dav_client();
     let url = join_url(&cfg.base_url, &full_path);
     let resp = client
@@ -257,14 +246,14 @@ impl OfficeTool for NasListTool {
     }
 
     fn description(&self) -> &str {
-        "列出懒猫微服 NAS（WebDAV）指定目录的文件与子目录。path 为空时列根目录。凭据按用户隔离，只访问当前用户自己挂载的 NAS。"
+        "列出懒猫微服 NAS（WebDAV）指定目录的文件与子目录。path 为空时列根目录。凭据按用户隔离，只访问当前用户自己的 NAS 数据源。"
     }
 
     fn parameters(&self) -> serde_json::Value {
         json!({
             "type": "object",
             "properties": {
-                "path": { "type": "string", "description": "NAS 上的目录路径（相对挂载根，如 /docs 或空字符串表示根目录）" }
+                "path": { "type": "string", "description": "NAS 上的目录路径（相对访问根，如 /docs 或空字符串表示根目录）" }
             },
             "required": []
         })
@@ -320,7 +309,7 @@ impl OfficeTool for NasReadTool {
         json!({
             "type": "object",
             "properties": {
-                "path": { "type": "string", "description": "NAS 上的文件路径（相对挂载根，如 /docs/方案.md）" }
+                "path": { "type": "string", "description": "NAS 上的文件路径（相对访问根，如 /docs/方案.md）" }
             },
             "required": ["path"]
         })
@@ -380,7 +369,7 @@ impl OfficeTool for NasWriteTool {
         json!({
             "type": "object",
             "properties": {
-                "path": { "type": "string", "description": "NAS 上的文件路径（相对挂载根，如 /docs/纪要.md）" },
+                "path": { "type": "string", "description": "NAS 上的文件路径（相对访问根，如 /docs/纪要.md）" },
                 "content": { "type": "string", "description": "要写入的文件内容" }
             },
             "required": ["path", "content"]
@@ -433,7 +422,7 @@ impl OfficeTool for NasMkdirTool {
         json!({
             "type": "object",
             "properties": {
-                "path": { "type": "string", "description": "要创建的目录路径（相对挂载根，如 /docs/2026）" }
+                "path": { "type": "string", "description": "要创建的目录路径（相对访问根，如 /docs/2026）" }
             },
             "required": ["path"]
         })
@@ -472,30 +461,19 @@ mod tests {
     use super::*;
 
     #[test]
-    fn resolve_path_namespace_isolation() {
-        // 空 root_path + 空 path → 空
-        assert_eq!(resolve_path("", "").unwrap(), "");
-        // 空 root_path + 相对 path → 直接用 path
-        assert_eq!(resolve_path("", "docs").unwrap(), "docs");
-        // 有 root_path + 空 path → root_path
-        assert_eq!(resolve_path("/users/alice", "").unwrap(), "users/alice");
-        // 有 root_path + 相对 path → root_path/path
-        assert_eq!(resolve_path("/users/alice", "docs").unwrap(), "users/alice/docs");
-        // 去多余斜杠
-        assert_eq!(resolve_path("/users/alice/", "/docs/").unwrap(), "users/alice/docs");
-        // 不同用户 root_path 隔离：同一相对路径映射到不同绝对路径
-        assert_eq!(resolve_path("/users/alice", "report.md").unwrap(), "users/alice/report.md");
-        assert_eq!(resolve_path("/users/bob", "report.md").unwrap(), "users/bob/report.md");
-    }
-
-    #[test]
-    fn resolve_path_blocks_traversal() {
-        // 拒绝 .. 路径穿越，防止逃出 root_path 命名空间
-        assert!(resolve_path("/users/alice", "../bob").is_err());
-        assert!(resolve_path("/users/alice", "a/../../b").is_err());
-        assert!(resolve_path("/users/alice", "..").is_err());
+    fn sanitize_path_trims_and_blocks_traversal() {
+        // 空路径 → 空
+        assert_eq!(sanitize_path("").unwrap(), "");
+        // 去首尾斜杠
+        assert_eq!(sanitize_path("/docs/").unwrap(), "docs");
+        assert_eq!(sanitize_path("docs").unwrap(), "docs");
+        assert_eq!(sanitize_path("/a/b/c").unwrap(), "a/b/c");
+        // 拒绝 .. 路径穿越
+        assert!(sanitize_path("../bob").is_err());
+        assert!(sanitize_path("a/../../b").is_err());
+        assert!(sanitize_path("..").is_err());
         // 正常路径不受影响
-        assert!(resolve_path("/users/alice", "a/b/c").is_ok());
+        assert!(sanitize_path("a/b/c").is_ok());
     }
 
     #[test]

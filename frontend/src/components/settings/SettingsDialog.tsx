@@ -413,23 +413,23 @@ export function SettingsDialog({ open, settings, onClose, onSave }: SettingsDial
           {section === 'nas' && (
             <div>
               <h2 className="text-xl font-bold tracking-tight text-surface-950">NAS 数据源</h2>
-              <p className="mt-1 text-sm text-surface-500">配置懒猫微服 NAS（WebDAV）访问。每个用户用各自的凭据 + 挂载根路径（root_path）做命名空间隔离，多用户共享同一 WebDAV 地址互不冲突。</p>
+              <p className="mt-1 text-sm text-surface-500">通过 HTTP(S) WebDAV 协议直接访问懒猫微服 NAS 文件，不在文件系统上挂载。每个用户填各自的懒猫账号 WebDAV 凭据，懒猫微服按账号隔离文件空间。</p>
               <div className="mt-5 space-y-4">
                 <label className="flex items-center gap-2 text-sm font-semibold text-surface-600">
                   <input
                     type="checkbox"
                     checked={draft.nas_config?.enabled || false}
-                    onChange={(event) => updateDraft({ nas_config: { ...(draft.nas_config || { name: '', base_url: '', username: '', password: '', root_path: '', enabled: false }), enabled: event.target.checked } })}
+                    onChange={(event) => updateDraft({ nas_config: { ...(draft.nas_config || { name: '', base_url: '', username: '', password: '', enabled: false }), enabled: event.target.checked } })}
                     className="h-4 w-4 rounded border-surface-300 text-surface-950"
                   />
                   启用 NAS 数据源
                 </label>
 
                 <label className="block text-sm font-semibold text-surface-600">
-                  挂载名称
+                  数据源名称
                   <input
                     value={draft.nas_config?.name || ''}
-                    onChange={(event) => updateDraft({ nas_config: { ...(draft.nas_config || { base_url: '', username: '', password: '', root_path: '', enabled: true }), name: event.target.value } })}
+                    onChange={(event) => updateDraft({ nas_config: { ...(draft.nas_config || { base_url: '', username: '', password: '', enabled: true }), name: event.target.value } })}
                     placeholder="如：公司资料库"
                     className="mt-2 w-full rounded-2xl border border-black/10 bg-white px-3 py-2.5 text-sm outline-none focus:border-surface-500"
                   />
@@ -439,18 +439,8 @@ export function SettingsDialog({ open, settings, onClose, onSave }: SettingsDial
                   WebDAV 地址
                   <input
                     value={draft.nas_config?.base_url || ''}
-                    onChange={(event) => updateDraft({ nas_config: { ...(draft.nas_config || { name: '', username: '', password: '', root_path: '', enabled: true }), base_url: event.target.value } })}
+                    onChange={(event) => updateDraft({ nas_config: { ...(draft.nas_config || { name: '', username: '', password: '', enabled: true }), base_url: event.target.value } })}
                     placeholder="https://xxx.heiyu.space/dav"
-                    className="mt-2 w-full rounded-2xl border border-black/10 bg-white px-3 py-2.5 font-mono text-sm outline-none focus:border-surface-500"
-                  />
-                </label>
-
-                <label className="block text-sm font-semibold text-surface-600">
-                  挂载根路径（命名空间隔离）
-                  <input
-                    value={draft.nas_config?.root_path || ''}
-                    onChange={(event) => updateDraft({ nas_config: { ...(draft.nas_config || { name: '', base_url: '', username: '', password: '', enabled: true }), root_path: event.target.value } })}
-                    placeholder="如 /users/alice 或 /tenant-a（留空则挂载整个根）"
                     className="mt-2 w-full rounded-2xl border border-black/10 bg-white px-3 py-2.5 font-mono text-sm outline-none focus:border-surface-500"
                   />
                 </label>
@@ -460,7 +450,7 @@ export function SettingsDialog({ open, settings, onClose, onSave }: SettingsDial
                     用户名
                     <input
                       value={draft.nas_config?.username || ''}
-                      onChange={(event) => updateDraft({ nas_config: { ...(draft.nas_config || { name: '', base_url: '', password: '', root_path: '', enabled: true }), username: event.target.value } })}
+                      onChange={(event) => updateDraft({ nas_config: { ...(draft.nas_config || { name: '', base_url: '', password: '', enabled: true }), username: event.target.value } })}
                       className="mt-2 w-full rounded-2xl border border-black/10 bg-white px-3 py-2.5 text-sm outline-none focus:border-surface-500"
                     />
                   </label>
@@ -469,14 +459,14 @@ export function SettingsDialog({ open, settings, onClose, onSave }: SettingsDial
                     <input
                       type="password"
                       value={draft.nas_config?.password || ''}
-                      onChange={(event) => updateDraft({ nas_config: { ...(draft.nas_config || { name: '', base_url: '', username: '', root_path: '', enabled: true }), password: event.target.value } })}
+                      onChange={(event) => updateDraft({ nas_config: { ...(draft.nas_config || { name: '', base_url: '', username: '', enabled: true }), password: event.target.value } })}
                       className="mt-2 w-full rounded-2xl border border-black/10 bg-white px-3 py-2.5 font-mono text-sm outline-none focus:border-surface-500"
                     />
                   </label>
                 </div>
 
                 <p className="rounded-lg bg-surface-50 px-3 py-2 text-xs text-surface-400">
-                  懒猫微服 WebDAV 地址是机器全局统一的（所有账号映射到同一文件树），因此隔离靠「挂载根路径」实现：每个用户/租户配自己的专属子目录，所有读写操作都限定在该根路径下，互不串扰。留空则使用整个根（仅适合单人单租户场景）。
+                  懒猫微服 WebDAV 通过 HTTP(S) 协议直接访问，无需在文件系统挂载。每个懒猫账号的 WebDAV 用户名/密码对应其自己的文件空间（用户文稿目录），因此不同用户填各自的凭据即天然隔离，无需额外配置目录路径。
                 </p>
               </div>
             </div>
