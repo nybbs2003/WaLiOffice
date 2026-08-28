@@ -61,25 +61,30 @@ impl Config {
     pub fn from_env() -> Result<Self> {
         dotenvy::dotenv().ok();
 
+        // 只有 JWT secret 是必需的环境变量（安全签名必需）；
+        // 其余 LLM 相关配置全部改为可选（默认空），由用户在设置页自行配置。
         let jwt_secret = env_or_required("AIPPT_JWT_SECRET");
 
-        let llm_text_base_url = env_or_required("LLM_TEXT_BASE_URL");
-        let llm_text_api_key = env_or_required("LLM_TEXT_API_KEY");
+        let llm_text_base_url = env_or("LLM_TEXT_BASE_URL", "");
+        let llm_text_api_key = env_or("LLM_TEXT_API_KEY", "");
         let llm_text_api_keys = split_api_keys(&llm_text_api_key);
 
-        let llm_image_base_url = env_or_required("LLM_IMAGE_BASE_URL");
-        let llm_image_api_key = env_or_required("LLM_IMAGE_API_KEY");
+        let llm_image_base_url = env_or("LLM_IMAGE_BASE_URL", "");
+        let llm_image_api_key = env_or("LLM_IMAGE_API_KEY", "");
         let llm_image_api_keys = split_api_keys(&llm_image_api_key);
 
-        let llm_video_base_url = env_or_required("LLM_VIDEO_BASE_URL");
-        let llm_video_api_key = env_or_required("LLM_VIDEO_API_KEY");
+        let llm_video_base_url = env_or("LLM_VIDEO_BASE_URL", "");
+        let llm_video_api_key = env_or("LLM_VIDEO_API_KEY", "");
         let llm_video_api_keys = split_api_keys(&llm_video_api_key);
 
-        // 模型列表（必填，逗号分隔）；默认模型取列表首个或 *_MODELS_DEFAULT
-        // 向后兼容：如果没配 LLM_TEXT_MODELS 但配了 LLM_TEXT_MODEL，则用后者作为单元素列表
+        // 模型列表（可选，逗号分隔）；默认模型取列表首个或 *_MODELS_DEFAULT
         let llm_text_models = match env::var("LLM_TEXT_MODELS") {
             Ok(v) if !v.trim().is_empty() => split_env_list(&v),
-            _ => vec![env_or_required("LLM_TEXT_MODEL")],
+            _ => env_or("LLM_TEXT_MODEL", "")
+                .split(',')
+                .map(|s| s.trim().to_string())
+                .filter(|s| !s.is_empty())
+                .collect(),
         };
         let llm_text_model = {
             let d = env_or("LLM_TEXT_MODELS_DEFAULT", "");
@@ -92,7 +97,11 @@ impl Config {
 
         let llm_image_models = match env::var("LLM_IMAGE_MODELS") {
             Ok(v) if !v.trim().is_empty() => split_env_list(&v),
-            _ => vec![env_or_required("LLM_IMAGE_MODEL")],
+            _ => env_or("LLM_IMAGE_MODEL", "")
+                .split(',')
+                .map(|s| s.trim().to_string())
+                .filter(|s| !s.is_empty())
+                .collect(),
         };
         let llm_image_model = {
             let d = env_or("LLM_IMAGE_MODELS_DEFAULT", "");
@@ -105,7 +114,11 @@ impl Config {
 
         let llm_video_models = match env::var("LLM_VIDEO_MODELS") {
             Ok(v) if !v.trim().is_empty() => split_env_list(&v),
-            _ => vec![env_or_required("LLM_VIDEO_MODEL")],
+            _ => env_or("LLM_VIDEO_MODEL", "")
+                .split(',')
+                .map(|s| s.trim().to_string())
+                .filter(|s| !s.is_empty())
+                .collect(),
         };
         let llm_video_model = {
             let d = env_or("LLM_VIDEO_MODELS_DEFAULT", "");

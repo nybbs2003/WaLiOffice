@@ -340,11 +340,11 @@ impl OfficeTool for ImagePromptTool {
             Err(err) => return ToolResult::err(err),
         };
 
-        let credentials = match resolve_image_credentials(&ctx.user_id) {
+        let credentials = match resolve_image_credentials(&ctx.user_id).await {
             Ok(credentials) => credentials,
             Err(err) => return ToolResult::err(err.to_string()),
         };
-        let image_model = agnes_image_model();
+        let image_model = agnes_image_model(&ctx.user_id).await;
         let endpoint = credentials.endpoint("/v1/images/generations");
         let client = match http_client(Duration::from_secs(240)) {
             Ok(client) => client,

@@ -74,8 +74,20 @@ static AGNES_KEY_CURSOR: Lazy<Mutex<std::collections::HashMap<String, usize>>> =
 
 use once_cell::sync::Lazy;
 
-pub fn resolve_image_credentials(_user_id: &str) -> Result<AgnesCredentials> {
+/// 读取 per-user 的图片模型配置（user_settings.image_profile），env 作为 fallback。
+pub async fn resolve_image_credentials(user_id: &str) -> Result<AgnesCredentials> {
     let config = crate::config::config();
+    let pool = crate::state::db_pool();
+
+    // 优先读用户自己的配置
+    if let Ok(Some(settings)) = crate::db::settings_repo::find_by_user(&pool, user_id).await {
+        let p = &settings.image_profile;
+        if !p.base_url.trim().is_empty() {
+            return credentials_from_config(&p.base_url, &p.api_keys, &p.api_key, "图片");
+        }
+    }
+
+    // fallback：环境变量
     credentials_from_config(
         &config.llm_image_base_url,
         &config.llm_image_api_keys,
@@ -84,8 +96,18 @@ pub fn resolve_image_credentials(_user_id: &str) -> Result<AgnesCredentials> {
     )
 }
 
-pub fn resolve_video_credentials(_user_id: &str) -> Result<AgnesCredentials> {
+/// 读取 per-user 的视频模型配置（user_settings.video_profile），env 作为 fallback。
+pub async fn resolve_video_credentials(user_id: &str) -> Result<AgnesCredentials> {
     let config = crate::config::config();
+    let pool = crate::state::db_pool();
+
+    if let Ok(Some(settings)) = crate::db::settings_repo::find_by_user(&pool, user_id).await {
+        let p = &settings.video_profile;
+        if !p.base_url.trim().is_empty() {
+            return credentials_from_config(&p.base_url, &p.api_keys, &p.api_key, "视频");
+        }
+    }
+
     credentials_from_config(
         &config.llm_video_base_url,
         &config.llm_video_api_keys,
@@ -102,7 +124,7 @@ fn credentials_from_config(
 ) -> Result<AgnesCredentials> {
     let base_url = base_url.trim();
     if base_url.is_empty() {
-        return Err(anyhow!("未配置 {kind} 模型的 BASE_URL"));
+        return Err(anyhow!("未配置 {kind} 模型的 BASE_URL（请在「设置 → {kind}模型」中填写，或配置环境变量）"));
     }
 
     let mut keys: Vec<String> = api_keys
@@ -117,7 +139,7 @@ fn credentials_from_config(
     if keys.is_empty() {
         let fallback = fallback_api_key.trim();
         if fallback.is_empty() {
-            return Err(anyhow!("未配置 {kind} 模型的 API_KEY"));
+            return Err(anyhow!("未配置 {kind} 模型的 API_KEY（请在「设置 → {kind}模型」中填写，或配置环境变量）"));
         }
         keys.push(fallback.to_string());
     }
@@ -128,12 +150,30 @@ fn credentials_from_config(
     })
 }
 
-pub fn agnes_image_model() -> String {
-    crate::config::config().llm_image_model.trim().to_string()
+/// 读取 per-user 的图片模型名（user_settings.image_profile.model），env fallback。
+pub async fn agnes_image_model(user_id: &str) -> String {
+    let config = crate::config::config();
+    let pool = crate::state::db_pool();
+    if let Ok(Some(settings)) = crate::db::settings_repo::find_by_user(&pool, user_id).await {
+        let m = settings.image_profile.model.trim().to_string();
+        if !m.is_empty() {
+            return m;
+        }
+    }
+    config.llm_image_model.trim().to_string()
 }
 
-pub fn agnes_video_model() -> String {
-    crate::config::config().llm_video_model.trim().to_string()
+/// 读取 per-user 的视频模型名（user_settings.video_profile.model），env fallback。
+pub async fn agnes_video_model(user_id: &str) -> String {
+    let config = crate::config::config();
+    let pool = crate::state::db_pool();
+    if let Ok(Some(settings)) = crate::db::settings_repo::find_by_user(&pool, user_id).await {
+        let m = settings.video_profile.model.trim().to_string();
+        if !m.is_empty() {
+            return m;
+        }
+    }
+    config.llm_video_model.trim().to_string()
 }
 
 pub fn http_client(timeout: Duration) -> Result<Client> {

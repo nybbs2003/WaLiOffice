@@ -95,6 +95,19 @@ pub struct BasicSettings {
     pub default_theme: String,
 }
 
+/// 多模态（图片/视频）模型配置（per-user，存 user_settings）
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct MediaProfileConfig {
+    #[serde(default)]
+    pub base_url: String,
+    #[serde(default)]
+    pub api_keys: Vec<String>,
+    #[serde(default)]
+    pub api_key: String,
+    #[serde(default)]
+    pub model: String,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct McpServerConfig {
     pub id: String,
@@ -135,6 +148,10 @@ pub struct AppSettings {
     pub feishu_token: FeishuToken,
     #[serde(default)]
     pub nas_config: NasConfig,
+    #[serde(default)]
+    pub image_profile: MediaProfileConfig,
+    #[serde(default)]
+    pub video_profile: MediaProfileConfig,
     pub updated_at: String,
 }
 

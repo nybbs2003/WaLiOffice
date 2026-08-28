@@ -85,7 +85,17 @@ export interface AppSettings {
   mcp_servers: MCPServiceConfig[];
   search_providers?: SearchProvidersConfig;
   nas_config?: NasConfig;
+  image_profile?: MediaProfileConfig;
+  video_profile?: MediaProfileConfig;
   updated_at: string;
+}
+
+// ===== 多模态（图片/视频）模型配置（per-user） =====
+export interface MediaProfileConfig {
+  base_url: string;
+  api_keys: string[];
+  api_key: string;
+  model: string;
 }
 
 export interface Artifact {

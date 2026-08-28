@@ -62,6 +62,18 @@ pub fn default_settings() -> AppSettings {
         },
         feishu_token: Default::default(),
         nas_config: Default::default(),
+        image_profile: crate::models::MediaProfileConfig {
+            base_url: cfg.llm_image_base_url.clone(),
+            api_keys: cfg.llm_image_api_keys.clone(),
+            api_key: cfg.llm_image_api_key.clone(),
+            model: cfg.llm_image_model.clone(),
+        },
+        video_profile: crate::models::MediaProfileConfig {
+            base_url: cfg.llm_video_base_url.clone(),
+            api_keys: cfg.llm_video_api_keys.clone(),
+            api_key: cfg.llm_video_api_key.clone(),
+            model: cfg.llm_video_model.clone(),
+        },
         updated_at: chrono::Utc::now().to_rfc3339(),
     }
 }

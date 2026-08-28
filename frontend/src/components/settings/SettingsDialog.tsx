@@ -1,4 +1,4 @@
-import { Check, KeyRound, Plus, Trash2, X, Cpu, LayoutDashboard, Search, Loader2, HardDrive } from 'lucide-react'
+import { Check, KeyRound, Plus, Trash2, X, Cpu, LayoutDashboard, Search, Loader2, HardDrive, Image as ImageIcon, Video as VideoIcon } from 'lucide-react'
 import { ModelCombobox } from './ModelCombobox'
 import { useEffect, useMemo, useState } from 'react'
 import { settingsApi } from '@/api'
@@ -39,7 +39,7 @@ const emptyMcpServer = (): MCPServiceConfig => ({
 })
 
 export function SettingsDialog({ open, settings, onClose, onSave }: SettingsDialogProps) {
-  const [section, setSection] = useState<'llm' | 'base' | 'mcp' | 'search' | 'nas'>('llm')
+  const [section, setSection] = useState<'llm' | 'base' | 'mcp' | 'search' | 'nas' | 'image' | 'video'>('llm')
   const [draft, setDraft] = useState<AppSettings | null>(settings)
   const [saving, setSaving] = useState(false)
   const [testingMcpId, setTestingMcpId] = useState<string | null>(null)
@@ -232,6 +232,8 @@ export function SettingsDialog({ open, settings, onClose, onSave }: SettingsDial
           <div className="space-y-1.5">
             {[
               ['llm', '模型服务', Cpu],
+              ['image', '图片模型', ImageIcon],
+              ['video', '视频模型', VideoIcon],
               ['search', '搜索服务', Search],
               ['nas', 'WebDAV 数据源', HardDrive],
               ['base', '基础信息', LayoutDashboard],
@@ -505,6 +507,80 @@ export function SettingsDialog({ open, settings, onClose, onSave }: SettingsDial
                 <p className="rounded-lg bg-surface-50 px-3 py-2 text-xs text-surface-400">
                   懒猫微服 WebDAV 通过 HTTP(S) 协议直接访问，无需在文件系统挂载。每个懒猫账号的 WebDAV 用户名/密码对应其自己的文件空间（用户文稿目录），因此不同用户填各自的凭据即天然隔离，无需额外配置目录路径。
                 </p>
+              </div>
+            </div>
+          )}
+
+          {section === 'image' && (
+            <div>
+              <h2 className="text-xl font-bold tracking-tight text-surface-950">图片模型</h2>
+              <p className="mt-1 text-sm text-surface-500">配置生图（AI 绘画）模型的地址、密钥和模型名。每个用户单独配置，未配置时回退到环境变量。</p>
+              <div className="mt-5 space-y-4">
+                <label className="block text-sm font-semibold text-surface-600">
+                  Base URL
+                  <input
+                    value={draft.image_profile?.base_url || ''}
+                    onChange={(event) => updateDraft({ image_profile: { ...(draft.image_profile || { base_url: '', api_keys: [], api_key: '', model: '' }), base_url: event.target.value } })}
+                    placeholder="https://apihub.agnes-ai.com"
+                    className="mt-2 w-full rounded-2xl border border-black/10 bg-white px-3 py-2.5 font-mono text-sm outline-none focus:border-surface-500"
+                  />
+                </label>
+                <label className="block text-sm font-semibold text-surface-600">
+                  API Key（多个用逗号分隔，做负载均衡）
+                  <input
+                    type="password"
+                    value={draft.image_profile?.api_key || ''}
+                    onChange={(event) => updateDraft({ image_profile: { ...(draft.image_profile || { base_url: '', api_keys: [], model: '' }), api_key: event.target.value } })}
+                    placeholder="sk-..."
+                    className="mt-2 w-full rounded-2xl border border-black/10 bg-white px-3 py-2.5 font-mono text-sm outline-none focus:border-surface-500"
+                  />
+                </label>
+                <label className="block text-sm font-semibold text-surface-600">
+                  模型名
+                  <input
+                    value={draft.image_profile?.model || ''}
+                    onChange={(event) => updateDraft({ image_profile: { ...(draft.image_profile || { base_url: '', api_keys: [], api_key: '' }), model: event.target.value } })}
+                    placeholder="agnes-image-2.1-flash"
+                    className="mt-2 w-full rounded-2xl border border-black/10 bg-white px-3 py-2.5 font-mono text-sm outline-none focus:border-surface-500"
+                  />
+                </label>
+              </div>
+            </div>
+          )}
+
+          {section === 'video' && (
+            <div>
+              <h2 className="text-xl font-bold tracking-tight text-surface-950">视频模型</h2>
+              <p className="mt-1 text-sm text-surface-500">配置生视频（AI 视频）模型的地址、密钥和模型名。每个用户单独配置，未配置时回退到环境变量。</p>
+              <div className="mt-5 space-y-4">
+                <label className="block text-sm font-semibold text-surface-600">
+                  Base URL
+                  <input
+                    value={draft.video_profile?.base_url || ''}
+                    onChange={(event) => updateDraft({ video_profile: { ...(draft.video_profile || { base_url: '', api_keys: [], api_key: '', model: '' }), base_url: event.target.value } })}
+                    placeholder="https://apihub.agnes-ai.com"
+                    className="mt-2 w-full rounded-2xl border border-black/10 bg-white px-3 py-2.5 font-mono text-sm outline-none focus:border-surface-500"
+                  />
+                </label>
+                <label className="block text-sm font-semibold text-surface-600">
+                  API Key（多个用逗号分隔，做负载均衡）
+                  <input
+                    type="password"
+                    value={draft.video_profile?.api_key || ''}
+                    onChange={(event) => updateDraft({ video_profile: { ...(draft.video_profile || { base_url: '', api_keys: [], model: '' }), api_key: event.target.value } })}
+                    placeholder="sk-..."
+                    className="mt-2 w-full rounded-2xl border border-black/10 bg-white px-3 py-2.5 font-mono text-sm outline-none focus:border-surface-500"
+                  />
+                </label>
+                <label className="block text-sm font-semibold text-surface-600">
+                  模型名
+                  <input
+                    value={draft.video_profile?.model || ''}
+                    onChange={(event) => updateDraft({ video_profile: { ...(draft.video_profile || { base_url: '', api_keys: [], api_key: '' }), model: event.target.value } })}
+                    placeholder="agnes-video-2.5"
+                    className="mt-2 w-full rounded-2xl border border-black/10 bg-white px-3 py-2.5 font-mono text-sm outline-none focus:border-surface-500"
+                  />
+                </label>
               </div>
             </div>
           )}

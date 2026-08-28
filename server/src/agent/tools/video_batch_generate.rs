@@ -175,14 +175,14 @@ impl OfficeTool for VideoBatchGenerateTool {
         );
 
         // ---- Agnes 凭证 ----
-        let credentials = match resolve_video_credentials(&ctx.user_id) {
+        let credentials = match resolve_video_credentials(&ctx.user_id).await {
             Ok(c) => c,
             Err(err) => {
                 return ToolResult::err(format!("Agnes 凭证不可用：{err}"));
             }
         };
 
-        let video_model = agnes_video_model();
+        let video_model = agnes_video_model(&ctx.user_id).await;
         let client = match http_client(Duration::from_secs(90)) {
             Ok(c) => c,
             Err(err) => {
