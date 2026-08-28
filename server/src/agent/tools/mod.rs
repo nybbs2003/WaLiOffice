@@ -3,6 +3,7 @@ pub mod chart_generate;
 pub mod doc_generate;
 pub mod drawio_generate;
 pub mod feishu_tools;
+pub mod nas_tools;
 pub mod image_prompt;
 pub mod local_video;
 pub mod md_generate;
@@ -58,6 +59,10 @@ pub async fn register_all_tools() {
     REGISTRY.register(Arc::new(feishu_tools::FeishuCalendarCreateEventTool)).await;
     REGISTRY.register(Arc::new(feishu_tools::FeishuDriveListTool)).await;
     REGISTRY.register(Arc::new(feishu_tools::FeishuWikiSearchTool)).await;
+    REGISTRY.register(Arc::new(nas_tools::NasListTool)).await;
+    REGISTRY.register(Arc::new(nas_tools::NasReadTool)).await;
+    REGISTRY.register(Arc::new(nas_tools::NasWriteTool)).await;
+    REGISTRY.register(Arc::new(nas_tools::NasMkdirTool)).await;
 
     let tools = REGISTRY.list().await;
     tracing::info!(

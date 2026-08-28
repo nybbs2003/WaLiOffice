@@ -133,6 +133,8 @@ pub struct AppSettings {
     pub search_providers: SearchProvidersConfig,
     #[serde(default)]
     pub feishu_token: FeishuToken,
+    #[serde(default)]
+    pub nas_config: NasConfig,
     pub updated_at: String,
 }
 
@@ -167,6 +169,28 @@ pub struct FeishuToken {
     pub scopes: String,
     #[serde(default)]
     pub open_id: String,
+}
+
+/// 每用户的 NAS（懒猫微服 WebDAV）挂载凭据
+/// 多租户场景：每个用户单独保存自己的 NAS 凭据，多用户挂载同一 NAS 互不冲突。
+/// 凭据按 user_id 隔离存储在 user_settings，工具调用时按 ctx.user_id 读取自己的凭据。
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct NasConfig {
+    /// 挂载名称（展示用）
+    #[serde(default)]
+    pub name: String,
+    /// WebDAV 基础地址，如 https://xxx.heiyu.space/dav
+    #[serde(default)]
+    pub base_url: String,
+    /// WebDAV 用户名
+    #[serde(default)]
+    pub username: String,
+    /// WebDAV 密码
+    #[serde(default)]
+    pub password: String,
+    /// 是否已配置
+    #[serde(default)]
+    pub enabled: bool,
 }
 
 #[derive(Debug, Clone, Deserialize)]

@@ -60,6 +60,7 @@ pub fn default_settings() -> AppSettings {
             ..Default::default()
         },
         feishu_token: Default::default(),
+        nas_config: Default::default(),
         updated_at: chrono::Utc::now().to_rfc3339(),
     }
 }
@@ -258,6 +259,15 @@ async fn save_settings(
     Json(payload): Json<AppSettings>,
 ) -> Result<Json<AppSettings>, AppError> {
     let pool = state::db_pool();
+    // 防御性合并：若前端漏传飞书 token（前端 types 未声明该字段），保留已存的 token，避免覆盖丢失
+    let mut payload = payload;
+    if payload.feishu_token.user_access_token.is_empty() && payload.feishu_token.refresh_token.is_empty() {
+        if let Ok(Some(existing)) = settings_repo::find_by_user(&pool, &user.0.id).await {
+            if !existing.feishu_token.user_access_token.is_empty() || !existing.feishu_token.refresh_token.is_empty() {
+                payload.feishu_token = existing.feishu_token;
+            }
+        }
+    }
     let normalized = normalize_settings(payload)?;
     let saved = settings_repo::save_for_user(&pool, &user.0.id, &normalized).await?;
     Ok(Json(saved))

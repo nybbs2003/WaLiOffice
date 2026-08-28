@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react'
+import { createPortal } from 'react-dom'
 import { X, Download, ChevronLeft, ChevronRight, FileText, FileSpreadsheet, FileType, FileCode, File as FileIcon, ChevronDown, Play } from 'lucide-react'
 import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
@@ -518,7 +519,7 @@ export function FilePreviewModal({ file, onClose, onPrev, onNext, onDownload }: 
     )
   }
 
-  return (
+  return createPortal(
     <div className="fixed inset-0 z-50 flex flex-col bg-black/70 backdrop-blur-sm" onClick={onClose}>
       {/* 预览区 — 占满主体空间 */}
       <div className="flex-1 overflow-auto flex flex-col items-center justify-start pt-8 px-4" onClick={e => e.stopPropagation()}>
@@ -575,6 +576,7 @@ export function FilePreviewModal({ file, onClose, onPrev, onNext, onDownload }: 
           </button>
         )}
       </div>
-    </div>
+    </div>,
+    document.body
   )
 }

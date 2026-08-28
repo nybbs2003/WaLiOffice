@@ -67,6 +67,15 @@ export interface SearchProvidersConfig {
   provider: string;
 }
 
+// ===== NAS（懒猫微服 WebDAV）挂载凭据（每用户各自保存） =====
+export interface NasConfig {
+  name: string;
+  base_url: string;
+  username: string;
+  password: string;
+  enabled: boolean;
+}
+
 export interface AppSettings {
   llm_profiles: LLMProfile[];
   active_profile_id: string;
@@ -75,6 +84,7 @@ export interface AppSettings {
   basic: BasicSettings;
   mcp_servers: MCPServiceConfig[];
   search_providers?: SearchProvidersConfig;
+  nas_config?: NasConfig;
   updated_at: string;
 }
 

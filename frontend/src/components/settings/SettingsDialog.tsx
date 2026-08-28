@@ -1,4 +1,4 @@
-import { Check, KeyRound, Plus, Trash2, X, Cpu, LayoutDashboard, Search, Loader2 } from 'lucide-react'
+import { Check, KeyRound, Plus, Trash2, X, Cpu, LayoutDashboard, Search, Loader2, HardDrive } from 'lucide-react'
 import { ModelCombobox } from './ModelCombobox'
 import { useEffect, useMemo, useState } from 'react'
 import { settingsApi } from '@/api'
@@ -39,7 +39,7 @@ const emptyMcpServer = (): MCPServiceConfig => ({
 })
 
 export function SettingsDialog({ open, settings, onClose, onSave }: SettingsDialogProps) {
-  const [section, setSection] = useState<'llm' | 'base' | 'mcp' | 'search'>('llm')
+  const [section, setSection] = useState<'llm' | 'base' | 'mcp' | 'search' | 'nas'>('llm')
   const [draft, setDraft] = useState<AppSettings | null>(settings)
   const [saving, setSaving] = useState(false)
   const [testingMcpId, setTestingMcpId] = useState<string | null>(null)
@@ -211,6 +211,7 @@ export function SettingsDialog({ open, settings, onClose, onSave }: SettingsDial
             {[
               ['llm', '模型服务', Cpu],
               ['search', '搜索服务', Search],
+              ['nas', 'NAS 数据源', HardDrive],
               ['base', '基础信息', LayoutDashboard],
               ['mcp', 'MCP 服务', KeyRound],
             ].map(([key, label, Icon]: any) => (
@@ -404,6 +405,68 @@ export function SettingsDialog({ open, settings, onClose, onSave }: SettingsDial
 
                 <p className="rounded-lg bg-surface-50 px-3 py-2 text-xs text-surface-400">
                   DuckDuckGo 免费无需 key；Tavily / Brave / Kimi 需要各自的 API Key。未填 key 的源会自动跳过。
+                </p>
+              </div>
+            </div>
+          )}
+
+          {section === 'nas' && (
+            <div>
+              <h2 className="text-xl font-bold tracking-tight text-surface-950">NAS 数据源</h2>
+              <p className="mt-1 text-sm text-surface-500">配置懒猫微服 NAS（WebDAV）挂载凭据。每个用户单独保存，多用户挂载同一 NAS 互不冲突。</p>
+              <div className="mt-5 space-y-4">
+                <label className="flex items-center gap-2 text-sm font-semibold text-surface-600">
+                  <input
+                    type="checkbox"
+                    checked={draft.nas_config?.enabled || false}
+                    onChange={(event) => updateDraft({ nas_config: { ...(draft.nas_config || { name: '', base_url: '', username: '', password: '', enabled: false }), enabled: event.target.checked } })}
+                    className="h-4 w-4 rounded border-surface-300 text-surface-950"
+                  />
+                  启用 NAS 数据源
+                </label>
+
+                <label className="block text-sm font-semibold text-surface-600">
+                  挂载名称
+                  <input
+                    value={draft.nas_config?.name || ''}
+                    onChange={(event) => updateDraft({ nas_config: { ...(draft.nas_config || { base_url: '', username: '', password: '', enabled: true }), name: event.target.value } })}
+                    placeholder="如：公司资料库"
+                    className="mt-2 w-full rounded-2xl border border-black/10 bg-white px-3 py-2.5 text-sm outline-none focus:border-surface-500"
+                  />
+                </label>
+
+                <label className="block text-sm font-semibold text-surface-600">
+                  WebDAV 地址
+                  <input
+                    value={draft.nas_config?.base_url || ''}
+                    onChange={(event) => updateDraft({ nas_config: { ...(draft.nas_config || { name: '', username: '', password: '', enabled: true }), base_url: event.target.value } })}
+                    placeholder="https://xxx.heiyu.space/dav"
+                    className="mt-2 w-full rounded-2xl border border-black/10 bg-white px-3 py-2.5 font-mono text-sm outline-none focus:border-surface-500"
+                  />
+                </label>
+
+                <div className="grid gap-4 md:grid-cols-2">
+                  <label className="block text-sm font-semibold text-surface-600">
+                    用户名
+                    <input
+                      value={draft.nas_config?.username || ''}
+                      onChange={(event) => updateDraft({ nas_config: { ...(draft.nas_config || { name: '', base_url: '', password: '', enabled: true }), username: event.target.value } })}
+                      className="mt-2 w-full rounded-2xl border border-black/10 bg-white px-3 py-2.5 text-sm outline-none focus:border-surface-500"
+                    />
+                  </label>
+                  <label className="block text-sm font-semibold text-surface-600">
+                    密码
+                    <input
+                      type="password"
+                      value={draft.nas_config?.password || ''}
+                      onChange={(event) => updateDraft({ nas_config: { ...(draft.nas_config || { name: '', base_url: '', username: '', enabled: true }), password: event.target.value } })}
+                      className="mt-2 w-full rounded-2xl border border-black/10 bg-white px-3 py-2.5 font-mono text-sm outline-none focus:border-surface-500"
+                    />
+                  </label>
+                </div>
+
+                <p className="rounded-lg bg-surface-50 px-3 py-2 text-xs text-surface-400">
+                  在懒猫微服「懒猫网盘 → 网络服务 → WebDAV」界面可看到域名、用户名和密码。填完后 agent 可用「NAS 数据源」工具（nas_list / nas_read / nas_write / nas_mkdir）读写该 NAS，无需在本机挂载文件系统。
                 </p>
               </div>
             </div>
