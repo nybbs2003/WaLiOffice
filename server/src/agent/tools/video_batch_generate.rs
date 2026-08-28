@@ -209,27 +209,46 @@ impl OfficeTool for VideoBatchGenerateTool {
                 }),
             );
 
-            // ---- 构建请求体 ----
+            // ---- 构建请求体（按厂商分派）----
             let aspect_ratio = normalize_aspect_ratio(&storyboard.aspect_ratio);
             let (size_label, _width, _height) = infer_size_label(aspect_ratio);
 
-            // Agnes V2.5: keyframe 模式传 mode="keyframes"，其他模式省略 mode
-            let mut request_body = json!({
-                "model": video_model.as_str(),
-                "prompt": shot.prompt.clone(),
-                "seconds": shot.seconds.to_string(),
-                "size": size_label,
-                "aspect_ratio": aspect_ratio,
-                "negative_prompt": "low quality, blurry, distorted, flicker, watermark, text artifacts",
-            });
+            let is_volc = credentials.video_vendor() == crate::agent::tools::agnes_media::VideoVendor::Volcengine;
 
-            if shot.mode == "keyframe" {
+            let mut request_body = if is_volc {
+                // 火山方舟 Seedance：content 数组（text + 可选图片参考）
+                let mut content_arr = vec![json!({ "type": "text", "text": shot.prompt.clone() })];
+                if !shot.reference_images.is_empty() {
+                    for img in &shot.reference_images {
+                        content_arr.push(json!({ "type": "image_url", "image_url": { "url": img } }));
+                    }
+                }
+                json!({
+                    "model": video_model.as_str(),
+                    "content": content_arr,
+                    "resolution": size_label.to_lowercase(),
+                    "duration": shot.seconds,
+                    "ratio": aspect_ratio,
+                })
+            } else {
+                // Agnes V2.5
+                json!({
+                    "model": video_model.as_str(),
+                    "prompt": shot.prompt.clone(),
+                    "seconds": shot.seconds.to_string(),
+                    "size": size_label,
+                    "aspect_ratio": aspect_ratio,
+                    "negative_prompt": "low quality, blurry, distorted, flicker, watermark, text artifacts",
+                })
+            };
+
+            if shot.mode == "keyframe" && !is_volc {
                 request_body["mode"] = json!("keyframes");
             }
 
-            // 模式专用参数
+            // 模式专用参数（仅 Agnes 支持）
             match shot.mode.as_str() {
-                "keyframe" => {
+                "keyframe" if !is_volc => {
                     if let Some(ff) = &shot.first_frame {
                         if !ff.is_empty() {
                             request_body["first_frame"] = json!(ff);
@@ -245,7 +264,7 @@ impl OfficeTool for VideoBatchGenerateTool {
                         request_body["audios"] = json!(shot.audio_urls);
                     }
                 }
-                "reference" => {
+                "reference" if !is_volc => {
                     let mut refs = shot.reference_images.clone();
                     // 链式一致性：将上一镜头视频 URL 加入参考
                     if chain_consistency {
@@ -277,7 +296,7 @@ impl OfficeTool for VideoBatchGenerateTool {
                         }
                     }
                 }
-                _ => {
+                _ if !is_volc => {
                     // text 模式也可以使用音频参考
                     if !shot.audio_urls.is_empty() {
                         request_body["audios"] = json!(shot.audio_urls);
@@ -297,10 +316,13 @@ impl OfficeTool for VideoBatchGenerateTool {
                         }
                     }
                 }
+                _ => {
+                    // 火山方舟：content 数组已含图片参考，无需额外参数
+                }
             }
 
-            // ---- 提交任务 ----
-            let create_url = credentials.endpoint("videos");
+            // ---- 提交任务（按厂商分派端点）----
+            let create_url = credentials.video_create_endpoint();
             let create_resp: CreateVideoResponse = match post_json(&client, &create_url, &credentials, &request_body).await {
                 Ok(r) => r,
                 Err(err) => {
@@ -329,7 +351,7 @@ impl OfficeTool for VideoBatchGenerateTool {
             };
 
             let task_id = create_resp.id.clone();
-            let poll_url = credentials.endpoint(&format!("videos/{}", urlencoding::encode(&task_id)));
+            let poll_url = credentials.video_query_endpoint(&task_id);
             let deadline = Instant::now() + Duration::from_secs(480);
             let mut latest_progress = create_resp.progress.unwrap_or(0);
 

@@ -6,7 +6,7 @@ use serde_json::json;
 use crate::auth::middleware::AuthUser;
 use crate::db::settings_repo;
 use crate::error::AppError;
-use crate::models::{AppSettings, BasicSettings, LlmProfileConfig, McpServerConfig, NasConfig, MediaProfileConfig};
+use crate::models::{AppSettings, BasicSettings, LlmProfileConfig, McpServerConfig, NasConfig};
 use crate::state;
 use crate::agent::tools::agnes_media::build_endpoint;
 use eventsource_stream::Eventsource;
@@ -954,7 +954,7 @@ async fn test_image_capability(
     })))
 }
 
-/// 生视频模型检测：调 /v1/videos 极小参数
+/// 生视频模型检测：按厂商分派端点（Agnes /v1/videos，火山方舟 /contents/generations/tasks）
 async fn test_video_capability(
     base_url: &str,
     api_key: &str,
@@ -965,11 +965,28 @@ async fn test_video_capability(
         .build()
         .map_err(|e| AppError::Internal(anyhow::anyhow!("构建 HTTP 客户端失败: {e}")))?;
 
-    let endpoint = build_endpoint(base_url, "videos");
-    let body = json!({
-        "model": model,
-        "prompt": "a single red circle",
-    });
+    let is_volc = crate::agent::tools::agnes_media::detect_video_vendor(base_url)
+        == crate::agent::tools::agnes_media::VideoVendor::Volcengine;
+
+    let endpoint = if is_volc {
+        build_endpoint(base_url, "contents/generations/tasks")
+    } else {
+        build_endpoint(base_url, "videos")
+    };
+    let body = if is_volc {
+        json!({
+            "model": model,
+            "content": [ { "type": "text", "text": "a single red circle" } ],
+            "resolution": "480p",
+            "duration": 4,
+            "ratio": "16:9",
+        })
+    } else {
+        json!({
+            "model": model,
+            "prompt": "a single red circle",
+        })
+    };
 
     let resp = client
         .post(&endpoint)

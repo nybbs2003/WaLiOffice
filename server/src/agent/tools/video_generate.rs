@@ -59,6 +59,8 @@ struct QueryVideoResponse {
     url: Option<String>,
     metadata: Option<VideoMetadata>,
     error: Option<serde_json::Value>,
+    /// 火山方舟 Seedance：视频 URL 在 content.video_url
+    content: Option<serde_json::Value>,
 }
 
 #[derive(Debug, Clone, serde::Deserialize)]
@@ -782,19 +784,33 @@ impl OfficeTool for VideoGenerateTool {
             }),
         );
 
-        // Agnes V2.5 API 实际规则（通过 API 实测确认，与文档有差异）：
-        // - text/reference 模式：mode 必须省略（传了会 400）
-        // - keyframe 模式：mode 设为 "keyframes"（复数，API valid_modes 确认）
-        let mut request_body = json!({
-            "model": video_model.as_str(),
-            "prompt": plan.prompt.clone(),
-            "seconds": plan.seconds.to_string(),
-            "size": size_label,
-            "aspect_ratio": plan.aspect_ratio.clone(),
-        });
+        let is_volc = credentials.video_vendor() == crate::agent::tools::agnes_media::VideoVendor::Volcengine;
 
-        // 仅 keyframe 模式传 mode="keyframes"
-        if generation_mode == "keyframe" {
+        // 请求体：按厂商分派（Agnes 用 prompt/seconds/aspect_ratio；火山方舟用 content 数组）
+        let mut request_body = if is_volc {
+            // 火山方舟 Seedance：content 数组 + resolution + duration + ratio
+            json!({
+                "model": video_model.as_str(),
+                "content": [
+                    { "type": "text", "text": plan.prompt.clone() }
+                ],
+                "resolution": size_label.to_lowercase(),
+                "duration": plan.seconds,
+                "ratio": plan.aspect_ratio.clone(),
+            })
+        } else {
+            // Agnes V2.5：prompt + seconds + size + aspect_ratio
+            json!({
+                "model": video_model.as_str(),
+                "prompt": plan.prompt.clone(),
+                "seconds": plan.seconds.to_string(),
+                "size": size_label,
+                "aspect_ratio": plan.aspect_ratio.clone(),
+            })
+        };
+
+        // 仅 keyframe 模式传 mode="keyframes"（仅 Agnes 支持）
+        if generation_mode == "keyframe" && !is_volc {
             request_body["mode"] = json!("keyframes");
         }
 
@@ -808,9 +824,9 @@ impl OfficeTool for VideoGenerateTool {
             request_body["seed"] = json!(seed);
         }
 
-        // ---- 模式专用参数 ----
+        // ---- 模式专用参数（仅 Agnes 支持 first_frame/last_frame/images[] 等）----
         match generation_mode {
-            "keyframe" => {
+            "keyframe" if !is_volc => {
                 // V2.5: first_frame / last_frame
                 if image_inputs.len() >= 1 {
                     request_body["first_frame"] = json!(image_inputs[0]);
@@ -849,8 +865,8 @@ impl OfficeTool for VideoGenerateTool {
             }
         }
 
-        // ---- 提交创建任务 ----
-        let create_url = credentials.endpoint("videos");
+        // ---- 提交创建任务（按厂商分派端点）----
+        let create_url = credentials.video_create_endpoint();
         let create_response = match post_json::<CreateVideoResponse>(
             &client,
             &create_url,
@@ -869,9 +885,9 @@ impl OfficeTool for VideoGenerateTool {
             }
         };
 
-        // V2.5: 使用 id 作为查询标识
+        // 使用 id 作为查询标识（按厂商分派查询端点）
         let video_task_id = create_response.id.clone();
-        let poll_url = credentials.endpoint(&format!("videos/{}", urlencoding::encode(&video_task_id)));
+        let poll_url = credentials.video_query_endpoint(&video_task_id);
         let deadline = Instant::now() + Duration::from_secs(480);
         let mut latest_progress = create_response.progress.unwrap_or(0);
 
@@ -914,8 +930,10 @@ impl OfficeTool for VideoGenerateTool {
             );
 
             match status_response.status.as_str() {
-                "completed" => {
-                    // API 实测：url 可能在顶层 url 字段，也可能在 metadata.url 中
+                // Agnes 用 completed，火山方舟用 succeeded
+                "completed" | "succeeded" => {
+                    // API 实测：url 可能在顶层 url / metadata.url（Agnes），
+                    // 或 content.video_url（火山方舟 Seedance）
                     let video_url = status_response
                         .url
                         .clone()
@@ -925,6 +943,15 @@ impl OfficeTool for VideoGenerateTool {
                                 .metadata
                                 .as_ref()
                                 .and_then(|m| m.url.clone())
+                                .filter(|url| !url.trim().is_empty())
+                        })
+                        .or_else(|| {
+                            status_response
+                                .content
+                                .as_ref()
+                                .and_then(|c| c.get("video_url"))
+                                .and_then(|v| v.as_str())
+                                .map(|s| s.to_string())
                                 .filter(|url| !url.trim().is_empty())
                         })
                         .ok_or_else(|| "视频任务已完成，但没有拿到最终视频链接".to_string());

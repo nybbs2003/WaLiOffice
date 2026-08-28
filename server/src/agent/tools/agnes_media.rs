@@ -21,6 +21,27 @@ impl AgnesCredentials {
         build_endpoint(&self.base_url, path)
     }
 
+    /// 视频生成厂商
+    pub fn video_vendor(&self) -> VideoVendor {
+        detect_video_vendor(&self.base_url)
+    }
+
+    /// 视频创建任务端点（按厂商分派）
+    pub fn video_create_endpoint(&self) -> String {
+        match self.video_vendor() {
+            VideoVendor::Volcengine => self.endpoint("contents/generations/tasks"),
+            VideoVendor::Agnes => self.endpoint("videos"),
+        }
+    }
+
+    /// 视频查询任务端点（按厂商分派）
+    pub fn video_query_endpoint(&self, task_id: &str) -> String {
+        match self.video_vendor() {
+            VideoVendor::Volcengine => self.endpoint(&format!("contents/generations/tasks/{}", urlencoding::encode(task_id))),
+            VideoVendor::Agnes => self.endpoint(&format!("videos/{}", urlencoding::encode(task_id))),
+        }
+    }
+
     /// Round-robin 选一个 Key；只有一个就直接返回
     pub fn pick_key(&self, scope: &str) -> Option<String> {
         if self.api_keys.is_empty() {
@@ -127,6 +148,25 @@ fn extract_version_suffix(base: &str) -> Option<(&str, &str)> {
         return Some((root, last));
     }
     None
+}
+
+/// 视频生成厂商类型
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum VideoVendor {
+    /// Agnes（agnes-ai.com）：OpenAI 风格 /v1/videos 异步任务
+    Agnes,
+    /// 火山方舟（volces.com / ark.cn）：/api/v3/contents/generations/tasks 异步任务
+    Volcengine,
+}
+
+/// 根据 base_url 域名自动识别视频厂商
+pub fn detect_video_vendor(base_url: &str) -> VideoVendor {
+    let base = base_url.trim().to_lowercase();
+    if base.contains("volces.com") || base.contains("volcengine") || base.contains("ark.cn") {
+        VideoVendor::Volcengine
+    } else {
+        VideoVendor::Agnes
+    }
 }
 
 /// 读取 per-user 的图片模型配置（user_settings.image_profile），env 作为 fallback。
@@ -396,5 +436,30 @@ mod tests {
             build_endpoint("https://ark.cn-beijing.volces.com/api/v3/responses", "images/generations"),
             "https://ark.cn-beijing.volces.com/api/v3/images/generations"
         );
+    }
+}
+
+#[cfg(test)]
+mod vendor_tests {
+    use super::*;
+
+    #[test]
+    fn detect_vendor_by_domain() {
+        assert_eq!(detect_video_vendor("https://apihub.agnes-ai.com"), VideoVendor::Agnes);
+        assert_eq!(detect_video_vendor("https://ark.cn-beijing.volces.com/api/v3"), VideoVendor::Volcengine);
+        assert_eq!(detect_video_vendor("https://www.volcengine.com/api/v3"), VideoVendor::Volcengine);
+        // 未知域名默认 Agnes
+        assert_eq!(detect_video_vendor("https://api.openai.com/v1"), VideoVendor::Agnes);
+    }
+
+    #[test]
+    fn video_endpoints_by_vendor() {
+        let agnes = AgnesCredentials { base_url: "https://apihub.agnes-ai.com".into(), api_keys: vec![] };
+        assert_eq!(agnes.video_create_endpoint(), "https://apihub.agnes-ai.com/v1/videos");
+        assert_eq!(agnes.video_query_endpoint("abc"), "https://apihub.agnes-ai.com/v1/videos/abc");
+
+        let volc = AgnesCredentials { base_url: "https://ark.cn-beijing.volces.com/api/v3".into(), api_keys: vec![] };
+        assert_eq!(volc.video_create_endpoint(), "https://ark.cn-beijing.volces.com/api/v3/contents/generations/tasks");
+        assert_eq!(volc.video_query_endpoint("abc"), "https://ark.cn-beijing.volces.com/api/v3/contents/generations/tasks/abc");
     }
 }
