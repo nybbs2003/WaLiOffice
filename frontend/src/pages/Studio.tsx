@@ -599,27 +599,6 @@ export default function Studio() {
     }
   }
 
-  const handleNewConversation = () => {
-    setActiveView('chat')
-    refreshConversations()
-    reset()
-    // 重置当前 tab 的标题
-    if (activeTabId) {
-      updateTab(activeTabId, { tabTitle: '新对话', sessionId: null })
-    }
-    setSearchParams({}, { replace: true })
-    autoExportedArtifactIdsRef.current.clear()
-    autoSavedArtifactIdsRef.current.clear()
-    setActiveTool('general')
-    setShowArtifactPanel(false)
-    setFollowLatestSlide(true)
-    setPptProgress(null)
-    setStreamPhase('idle')
-    setStreamStatus('空闲')
-    setProcessLogs([])
-    setAttachments([])
-  }
-
   const handleSelectConversation = async (id: string) => {
     // 并发支持：切换会话不再中止当前会话的执行
     setActiveView('chat')
@@ -705,6 +684,11 @@ export default function Studio() {
     try {
       await sessionApi.deleteSession(id)
       if (sessionId === id) {
+        // 删除当前会话时，中止该 tab 正在进行的请求，避免 SSE 写回已清空的 tab
+        if (activeTabId) {
+          abortControllersRef.current.get(activeTabId)?.abort()
+          abortControllersRef.current.delete(activeTabId)
+        }
         reset()
         setSearchParams({}, { replace: true })
       }
