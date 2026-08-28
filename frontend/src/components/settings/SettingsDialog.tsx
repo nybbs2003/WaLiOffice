@@ -48,6 +48,8 @@ export function SettingsDialog({ open, settings, onClose, onSave }: SettingsDial
   const [nasTestResult, setNasTestResult] = useState<{ ok: boolean; message: string } | null>(null)
   const [testingMedia, setTestingMedia] = useState<'image' | 'video' | null>(null)
   const [mediaTestResult, setMediaTestResult] = useState<Record<'image' | 'video', { ok: boolean; message: string } | null>>({ image: null, video: null })
+  const [testingLlmProfile, setTestingLlmProfile] = useState<string | null>(null)
+  const [llmTestResult, setLlmTestResult] = useState<Record<string, { ok: boolean; message: string } | null>>({})
   const [fetchingModelProfile, setFetchingModelProfile] = useState<string | null>(null)
   const [fetchModelError, setFetchModelError] = useState('')
   const [fetchedModelsMap, setFetchedModelsMap] = useState<Record<string, string[]>>({})
@@ -209,18 +211,40 @@ export function SettingsDialog({ open, settings, onClose, onSave }: SettingsDial
     setTestingMedia(kind)
     setMediaTestResult((prev) => ({ ...prev, [kind]: null }))
     try {
-      const res = await settingsApi.testMedia({ base_url: profile.base_url, api_key: profile.api_key })
+      const res = await settingsApi.testLlm({ kind, base_url: profile.base_url, api_key: profile.api_key, model: profile.model })
       setMediaTestResult((prev) => ({
         ...prev,
-        [kind]: { ok: !!res.data?.ok, message: res.data?.message || '测试完成' },
+        [kind]: { ok: !!res.data?.ok, message: res.data?.message || '检测完成' },
       }))
     } catch (err: any) {
       setMediaTestResult((prev) => ({
         ...prev,
-        [kind]: { ok: false, message: err.response?.data?.detail || err.message || '测试失败' },
+        [kind]: { ok: false, message: err.response?.data?.detail || err.message || '检测失败' },
       }))
     } finally {
       setTestingMedia(null)
+    }
+  }
+
+  const testLlmCapability = async (profile: LLMProfile) => {
+    const keys = getProfileKeys(profile)
+    const apiKey = keys[0] || ''
+    const model = profile.models?.[0] || profile.default_model || ''
+    setTestingLlmProfile(profile.id)
+    setLlmTestResult((prev) => ({ ...prev, [profile.id]: null }))
+    try {
+      const res = await settingsApi.testLlm({ kind: 'text', base_url: profile.base_url, api_key: apiKey, model })
+      setLlmTestResult((prev) => ({
+        ...prev,
+        [profile.id]: { ok: !!res.data?.ok, message: res.data?.message || '检测完成' },
+      }))
+    } catch (err: any) {
+      setLlmTestResult((prev) => ({
+        ...prev,
+        [profile.id]: { ok: false, message: err.response?.data?.detail || err.message || '检测失败' },
+      }))
+    } finally {
+      setTestingLlmProfile(null)
     }
   }
 
@@ -389,6 +413,21 @@ export function SettingsDialog({ open, settings, onClose, onSave }: SettingsDial
                             点开选择已有模型，或输入新模型名回车添加；「拉取」从 Base URL 获取真实列表。
                           </span>
                         </label>
+
+                        <button
+                          type="button"
+                          onClick={() => testLlmCapability(profile)}
+                          disabled={testingLlmProfile === profile.id}
+                          className="flex items-center gap-2 rounded-2xl border border-surface-300 bg-white px-4 py-2 text-sm font-semibold text-surface-700 transition hover:bg-surface-50 disabled:cursor-not-allowed disabled:opacity-50"
+                        >
+                          {testingLlmProfile === profile.id ? '检测中...' : '检测能力（含工具调用）'}
+                        </button>
+
+                        {llmTestResult[profile.id] && (
+                          <div className={`rounded-lg px-3 py-2 text-sm break-all whitespace-pre-wrap leading-relaxed ${llmTestResult[profile.id]!.ok ? 'bg-emerald-50 text-emerald-700' : 'bg-red-50 text-red-600'}`}>
+                            {llmTestResult[profile.id]!.message}
+                          </div>
+                        )}
                       </div>
                     </div>
                   )
@@ -574,7 +613,7 @@ export function SettingsDialog({ open, settings, onClose, onSave }: SettingsDial
                   disabled={testingMedia === 'image'}
                   className="flex items-center gap-2 rounded-2xl border border-surface-300 bg-white px-4 py-2 text-sm font-semibold text-surface-700 transition hover:bg-surface-50 disabled:cursor-not-allowed disabled:opacity-50"
                 >
-                  {testingMedia === 'image' ? '测试中...' : '测试连接'}
+                  {testingMedia === 'image' ? '检测中...' : '检测能力'}
                 </button>
 
                 {mediaTestResult.image && (
@@ -626,7 +665,7 @@ export function SettingsDialog({ open, settings, onClose, onSave }: SettingsDial
                   disabled={testingMedia === 'video'}
                   className="flex items-center gap-2 rounded-2xl border border-surface-300 bg-white px-4 py-2 text-sm font-semibold text-surface-700 transition hover:bg-surface-50 disabled:cursor-not-allowed disabled:opacity-50"
                 >
-                  {testingMedia === 'video' ? '测试中...' : '测试连接'}
+                  {testingMedia === 'video' ? '检测中...' : '检测能力'}
                 </button>
 
                 {mediaTestResult.video && (

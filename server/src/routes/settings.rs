@@ -6,7 +6,7 @@ use serde_json::json;
 use crate::auth::middleware::AuthUser;
 use crate::db::settings_repo;
 use crate::error::AppError;
-use crate::models::{AppSettings, BasicSettings, LlmProfileConfig, McpServerConfig, NasConfig};
+use crate::models::{AppSettings, BasicSettings, LlmProfileConfig, McpServerConfig, NasConfig, MediaProfileConfig};
 use crate::state;
 use eventsource_stream::Eventsource;
 use futures::StreamExt;
@@ -18,6 +18,7 @@ pub fn router() -> Router {
         .route("/api/settings/fetch-models", post(fetch_models))
         .route("/api/settings/nas/test", post(test_nas))
         .route("/api/settings/media/test", post(test_media_model))
+        .route("/api/settings/llm/test", post(test_llm_capability))
 }
 
 #[derive(Debug, Deserialize)]
@@ -32,6 +33,17 @@ struct TestMediaReq {
     base_url: String,
     #[serde(default)]
     api_key: String,
+}
+
+#[derive(Debug, Deserialize)]
+struct TestLlmReq {
+    /// 检测类型：text（推理）/ image（生图）/ video（生视频）
+    kind: String,
+    base_url: String,
+    #[serde(default)]
+    api_key: String,
+    #[serde(default)]
+    model: String,
 }
 
 pub fn default_settings() -> AppSettings {
@@ -743,5 +755,258 @@ async fn test_media_model(
     Ok(Json(json!({
         "ok": false,
         "message": format!("连接失败：{}", last_err.unwrap_or_else(|| "未知错误".into())),
+    })))
+}
+
+/// 检测模型能力：
+/// - text：推理模型连通性 + 是否支持工具调用（function calling）
+/// - image：生图模型连通性（调 /v1/images/generations 极小参数）
+/// - video：生视频模型连通性（调 /v1/videos 极小参数）
+async fn test_llm_capability(
+    _user: AuthUser,
+    Json(req): Json<TestLlmReq>,
+) -> Result<Json<serde_json::Value>, AppError> {
+    let base_url = req.base_url.trim().trim_end_matches('/').to_string();
+    if base_url.is_empty() {
+        return Err(AppError::BadRequest("Base URL 不能为空".into()));
+    }
+
+    match req.kind.as_str() {
+        "text" => test_text_capability(&base_url, &req.api_key, &req.model).await,
+        "image" => test_image_capability(&base_url, &req.api_key, &req.model).await,
+        "video" => test_video_capability(&base_url, &req.api_key, &req.model).await,
+        _ => Err(AppError::BadRequest("未知检测类型".into())),
+    }
+}
+
+/// 推理模型检测：连通性 + 工具调用能力
+async fn test_text_capability(
+    base_url: &str,
+    api_key: &str,
+    model: &str,
+) -> Result<Json<serde_json::Value>, AppError> {
+    use crate::llm::types::{ChatCompletionRequest, RequestMessage, FunctionDef, FunctionSpec};
+
+    let client = reqwest::Client::builder()
+        .timeout(std::time::Duration::from_secs(30))
+        .build()
+        .map_err(|e| AppError::Internal(anyhow::anyhow!("构建 HTTP 客户端失败: {e}")))?;
+
+    // 1. 连通性 + 工具调用能力：发一个带 tools 的消息，问"现在几点"
+    let tool_def = FunctionDef {
+        def_type: "function".into(),
+        function: FunctionSpec {
+            name: "get_current_time".into(),
+            description: "获取当前时间".into(),
+            parameters: json!({
+                "type": "object",
+                "properties": {},
+                "required": []
+            }),
+        },
+    };
+    let messages = vec![RequestMessage {
+        role: "user".into(),
+        content: serde_json::Value::String("请调用 get_current_time 工具告诉我现在几点。".into()),
+        tool_calls: None,
+        tool_call_id: None,
+    }];
+    let req_body = ChatCompletionRequest {
+        model: model.to_string(),
+        messages,
+        tools: Some(vec![tool_def]),
+        tool_choice: None,
+        temperature: Some(0.0),
+        stream: Some(false),
+    };
+
+    let endpoint = format!("{base_url}/chat/completions");
+    let resp = client
+        .post(&endpoint)
+        .header("Authorization", format!("Bearer {}", api_key.trim()))
+        .header("Content-Type", "application/json")
+        .json(&req_body)
+        .send()
+        .await;
+
+    let resp = match resp {
+        Ok(r) => r,
+        Err(e) => {
+            return Ok(Json(json!({
+                "ok": false,
+                "message": format!("连接失败：{e}"),
+            })));
+        }
+    };
+
+    let status = resp.status();
+    if !status.is_success() {
+        let body = resp.text().await.unwrap_or_default();
+        let hint = match status.as_u16() {
+            401 | 403 => "认证失败，请检查 API Key".to_string(),
+            404 => "端点不存在，可能 base_url 不对".to_string(),
+            _ => format!("HTTP {}", status.as_u16()),
+        };
+        let body_preview: String = body.chars().take(200).collect();
+        return Ok(Json(json!({
+            "ok": false,
+            "message": format!("连接失败：{hint}（{body_preview}）"),
+        })));
+    }
+
+    let result: crate::llm::types::ChatCompletionResponse = match resp.json().await {
+        Ok(r) => r,
+        Err(e) => {
+            return Ok(Json(json!({
+                "ok": false,
+                "message": format!("响应解析失败：{e}"),
+            })));
+        }
+    };
+
+    // 判断工具调用能力
+    let has_tool_calls = result.choices.iter().any(|c| {
+        c.message.tool_calls.as_ref().map(|tc| !tc.is_empty()).unwrap_or(false)
+    });
+
+    if has_tool_calls {
+        Ok(Json(json!({
+            "ok": true,
+            "supports_tools": true,
+            "message": "检测通过：模型可连通，且具备工具调用（function calling）能力",
+        })))
+    } else {
+        Ok(Json(json!({
+            "ok": true,
+            "supports_tools": false,
+            "message": "模型可连通，但不支持工具调用（未返回 tool_calls）——这会影响 WaLiOffice 的 Agent 工具调度能力",
+        })))
+    }
+}
+
+/// 生图模型检测：调 /v1/images/generations 极小参数
+async fn test_image_capability(
+    base_url: &str,
+    api_key: &str,
+    model: &str,
+) -> Result<Json<serde_json::Value>, AppError> {
+    let client = reqwest::Client::builder()
+        .timeout(std::time::Duration::from_secs(60))
+        .build()
+        .map_err(|e| AppError::Internal(anyhow::anyhow!("构建 HTTP 客户端失败: {e}")))?;
+
+    // 极小参数：1 张最小尺寸
+    let endpoint = format!("{base_url}/v1/images/generations");
+    let body = json!({
+        "model": model,
+        "prompt": "a single red circle",
+        "size": "256x256",
+        "n": 1,
+    });
+
+    let resp = client
+        .post(&endpoint)
+        .header("Authorization", format!("Bearer {}", api_key.trim()))
+        .header("Content-Type", "application/json")
+        .json(&body)
+        .send()
+        .await;
+
+    let resp = match resp {
+        Ok(r) => r,
+        Err(e) => {
+            return Ok(Json(json!({ "ok": false, "message": format!("连接失败：{e}") })));
+        }
+    };
+
+    let status = resp.status();
+    if !status.is_success() {
+        let body = resp.text().await.unwrap_or_default();
+        let hint = match status.as_u16() {
+            401 | 403 => "认证失败，请检查 API Key".to_string(),
+            404 => "端点不存在，可能 base_url 或路径不对".to_string(),
+            _ => format!("HTTP {}", status.as_u16()),
+        };
+        let body_preview: String = body.chars().take(200).collect();
+        return Ok(Json(json!({
+            "ok": false,
+            "message": format!("生图失败：{hint}（{body_preview}）"),
+        })));
+    }
+
+    let result: serde_json::Value = resp.json().await.unwrap_or(serde_json::Value::Null);
+    // 检查是否返回图片（url / b64_json / data[].url / data[].b64_json）
+    let has_image = result
+        .get("data")
+        .and_then(|d| d.as_array())
+        .map(|arr| arr.iter().any(|item| item.get("url").is_some() || item.get("b64_json").is_some()))
+        .unwrap_or(false)
+        || result.get("url").is_some()
+        || result.get("b64_json").is_some()
+        || result.get("image_url").is_some()
+        || result.get("image_urls").is_some();
+
+    Ok(Json(json!({
+        "ok": true,
+        "has_image": has_image,
+        "message": if has_image { "检测通过：生图模型可用，成功生成图片" } else { "模型响应正常，但未返回图片（响应格式可能不匹配）" },
+    })))
+}
+
+/// 生视频模型检测：调 /v1/videos 极小参数
+async fn test_video_capability(
+    base_url: &str,
+    api_key: &str,
+    model: &str,
+) -> Result<Json<serde_json::Value>, AppError> {
+    let client = reqwest::Client::builder()
+        .timeout(std::time::Duration::from_secs(60))
+        .build()
+        .map_err(|e| AppError::Internal(anyhow::anyhow!("构建 HTTP 客户端失败: {e}")))?;
+
+    let endpoint = format!("{base_url}/v1/videos");
+    let body = json!({
+        "model": model,
+        "prompt": "a single red circle",
+    });
+
+    let resp = client
+        .post(&endpoint)
+        .header("Authorization", format!("Bearer {}", api_key.trim()))
+        .header("Content-Type", "application/json")
+        .json(&body)
+        .send()
+        .await;
+
+    let resp = match resp {
+        Ok(r) => r,
+        Err(e) => {
+            return Ok(Json(json!({ "ok": false, "message": format!("连接失败：{e}") })));
+        }
+    };
+
+    let status = resp.status();
+    if !status.is_success() {
+        let body = resp.text().await.unwrap_or_default();
+        let hint = match status.as_u16() {
+            401 | 403 => "认证失败，请检查 API Key".to_string(),
+            404 => "端点不存在，可能 base_url 或路径不对".to_string(),
+            _ => format!("HTTP {}", status.as_u16()),
+        };
+        let body_preview: String = body.chars().take(200).collect();
+        return Ok(Json(json!({
+            "ok": false,
+            "message": format!("生视频失败：{hint}（{body_preview}）"),
+        })));
+    }
+
+    let result: serde_json::Value = resp.json().await.unwrap_or(serde_json::Value::Null);
+    // 检查是否返回任务 id
+    let has_task = result.get("id").is_some() || result.get("task_id").is_some() || result.get("data").is_some();
+
+    Ok(Json(json!({
+        "ok": true,
+        "has_task": has_task,
+        "message": if has_task { "检测通过：生视频模型可用，成功创建视频任务" } else { "模型响应正常，但未返回任务 id（响应格式可能不匹配）" },
     })))
 }
