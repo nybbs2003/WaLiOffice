@@ -1,4 +1,4 @@
-import { Check, KeyRound, Plus, Trash2, X, Cpu, LayoutDashboard, Search } from 'lucide-react'
+import { Check, KeyRound, Plus, Trash2, X, Cpu, LayoutDashboard, Search, Loader2 } from 'lucide-react'
 import { ModelCombobox } from './ModelCombobox'
 import { useEffect, useMemo, useState } from 'react'
 import { settingsApi } from '@/api'
@@ -54,7 +54,19 @@ export function SettingsDialog({ open, settings, onClose, onSave }: SettingsDial
 
   const hasChanges = useMemo(() => JSON.stringify(draft) !== JSON.stringify(settings), [draft, settings])
 
-  if (!open || !draft) return null
+  // 有 open 但 draft 未加载（settings 为 null）时，显示加载占位而非空白
+  if (!open) return null
+
+  if (!draft) {
+    return (
+      <div className="flex h-full items-center justify-center">
+        <div className="flex items-center gap-2 text-surface-400">
+          <Loader2 className="h-5 w-5 animate-spin" />
+          <span>加载设置中…</span>
+        </div>
+      </div>
+    )
+  }
 
   const updateDraft = (patch: Partial<AppSettings>) => {
     setDraft((prev) => (prev ? { ...prev, ...patch } : prev))

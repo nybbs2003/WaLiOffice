@@ -45,6 +45,16 @@ export function ToolConfigDropdown({
     return () => document.removeEventListener('mousedown', handleClickOutside)
   }, [open])
 
+  // Esc 关闭下拉
+  useEffect(() => {
+    if (!open) return
+    const handleKey = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') setOpen(false)
+    }
+    document.addEventListener('keydown', handleKey)
+    return () => document.removeEventListener('keydown', handleKey)
+  }, [open])
+
   // 切换工具时自动填充默认值
   useEffect(() => {
     if (!options) return

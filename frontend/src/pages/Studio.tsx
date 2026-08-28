@@ -373,6 +373,22 @@ export default function Studio() {
     }
   }, [sessionId])
 
+  // Esc 键：关闭设置页 + 关闭飞书授权弹窗
+  useEffect(() => {
+    const handleKey = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') {
+        if (activeView === 'settings') {
+          setActiveView('chat')
+        }
+        if (feishuAuthPrompt) {
+          setFeishuAuthPrompt(null)
+        }
+      }
+    }
+    window.addEventListener('keydown', handleKey)
+    return () => window.removeEventListener('keydown', handleKey)
+  }, [activeView, feishuAuthPrompt])
+
   useEffect(() => {
     const timer = window.setTimeout(() => {
       refreshConversations(conversationQuery)
