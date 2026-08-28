@@ -1,4 +1,5 @@
 import { useState, useRef, useEffect } from 'react'
+import { createPortal } from 'react-dom'
 import { ChevronDown, Settings2 } from 'lucide-react'
 import { getAgentTool } from '@/config/agent-tools'
 import type { ToolKind, ToolConfigMap, ToolConfigOption } from '@/types'
@@ -21,7 +22,9 @@ export function ToolConfigDropdown({
   disabled = false,
 }: ToolConfigDropdownProps) {
   const [open, setOpen] = useState(false)
-  const dropdownRef = useRef<HTMLDivElement>(null)
+  const [pos, setPos] = useState<{ top: number; right: number } | null>(null)
+  const buttonRef = useRef<HTMLButtonElement>(null)
+  const panelRef = useRef<HTMLDivElement>(null)
 
   const tool = getAgentTool(activeTool)
   const options = tool.configOptions
@@ -31,7 +34,10 @@ export function ToolConfigDropdown({
   useEffect(() => {
     if (!open) return
     const handleClickOutside = (e: MouseEvent) => {
-      if (dropdownRef.current && !dropdownRef.current.contains(e.target as Node)) {
+      const target = e.target as Node
+      const inButton = buttonRef.current?.contains(target)
+      const inPanel = panelRef.current?.contains(target)
+      if (!inButton && !inPanel) {
         setOpen(false)
       }
     }
@@ -65,6 +71,15 @@ export function ToolConfigDropdown({
     return match?.label ?? String(val)
   }
 
+  const toggle = () => {
+    if (!open && buttonRef.current) {
+      const rect = buttonRef.current.getBoundingClientRect()
+      // 面板向上弹出：底部对齐按钮顶部
+      setPos({ top: rect.top, right: window.innerWidth - rect.right })
+    }
+    setOpen(!open)
+  }
+
   // 检查是否有非默认配置
   const hasNonDefault = hasConfig
     ? options!.some((opt) => {
@@ -88,11 +103,12 @@ export function ToolConfigDropdown({
   }
 
   return (
-    <div className="relative" ref={dropdownRef}>
+    <div>
       <button
+        ref={buttonRef}
         type="button"
         disabled={disabled}
-        onClick={() => setOpen(!open)}
+        onClick={toggle}
         className={`
           inline-flex h-9 items-center gap-1.5 rounded-full border px-2.5 text-[11px] font-medium
           transition-all disabled:opacity-50
@@ -114,8 +130,12 @@ export function ToolConfigDropdown({
         <ChevronDown className={`h-3 w-3 ${open ? 'text-indigo-400' : 'text-surface-400'} transition-transform ${open ? 'rotate-180' : ''}`} />
       </button>
 
-      {open && (
-        <div className="absolute bottom-full right-0 mb-2 w-72 rounded-2xl border border-gray-200 bg-white p-0 shadow-lg z-50 overflow-hidden">
+      {open && pos && createPortal(
+        <div
+          ref={panelRef}
+          className="fixed z-[100] w-72 rounded-2xl border border-gray-200 bg-white shadow-lg"
+          style={{ top: pos.top - 8, right: pos.right, transform: 'translateY(-100%)' }}
+        >
           {/* 标题栏 */}
           <div className="flex items-center justify-between px-4 py-2.5 border-b border-gray-100 bg-gray-50">
             <div className="flex items-center gap-2">
@@ -201,7 +221,8 @@ export function ToolConfigDropdown({
               ))}
             </div>
           </div>
-        </div>
+        </div>,
+        document.body
       )}
     </div>
   )
