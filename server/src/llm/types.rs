@@ -9,6 +9,9 @@ pub struct RequestMessage {
     pub tool_calls: Option<Vec<serde_json::Value>>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub tool_call_id: Option<String>,
+    /// 思考模型的推理过程（多轮回传，Kimi 保留式思考要求原样保留）
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub reasoning_content: Option<String>,
 }
 
 impl RequestMessage {
@@ -18,6 +21,7 @@ impl RequestMessage {
             content: Value::String(msg.content.clone()),
             tool_calls: msg.tool_calls.clone(),
             tool_call_id: msg.tool_call_id.clone(),
+            reasoning_content: msg.reasoning_content.clone(),
         }
     }
 
@@ -62,6 +66,7 @@ impl RequestMessage {
             content: Value::Array(content),
             tool_calls: msg.tool_calls.clone(),
             tool_call_id: msg.tool_call_id.clone(),
+            reasoning_content: msg.reasoning_content.clone(),
         }
     }
 }
@@ -129,6 +134,9 @@ pub struct ResponseMessage {
     pub content: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub tool_calls: Option<Vec<ToolCall>>,
+    /// 思考模型（DeepSeek-R1 / Kimi K3 等）的推理过程
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub reasoning_content: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

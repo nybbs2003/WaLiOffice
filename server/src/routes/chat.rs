@@ -922,6 +922,7 @@ async fn chat_stream(
         content: req.message.clone(),
         tool_calls: None,
         tool_call_id: None,
+        reasoning_content: None,
     };
     let _ = session_repo::add_message(&pool, &session_id, &user_msg).await;
 
@@ -1136,6 +1137,7 @@ async fn chat_stream(
                     content: content.clone(),
                     tool_calls: None,
                     tool_call_id: None,
+                    reasoning_content: None,
                 };
                 let _ =
                     session_repo::add_message(&pool_for_save, &session_id_for_save, &assistant_msg).await;

@@ -210,6 +210,7 @@ pub async fn run_agent_loop(
             content: system_prompt,
             tool_calls: None,
             tool_call_id: None,
+            reasoning_content: None,
         }];
         // 保留最近 8 条历史
         let hist_start = compacted.len().saturating_sub(8);
@@ -219,6 +220,7 @@ pub async fn run_agent_loop(
             content: user_message.clone(),
             tool_calls: None,
             tool_call_id: None,
+            reasoning_content: None,
         });
 
         let mut all_artifacts: Vec<Artifact> = Vec::new();
@@ -322,6 +324,7 @@ pub async fn run_agent_loop(
                         .collect(),
                 ),
                 tool_call_id: None,
+                reasoning_content: choice.message.reasoning_content.clone(),
             });
 
             // 逐个执行工具调用
@@ -379,6 +382,7 @@ pub async fn run_agent_loop(
                     content: tool_content,
                     tool_calls: None,
                     tool_call_id: Some(tc.id.clone()),
+                    reasoning_content: None,
                 });
 
                 // 收集 Artifact
@@ -413,6 +417,7 @@ pub async fn run_agent_loop(
             content: "你已经完成了多轮工具调用。请根据以上工具执行结果，给用户一个简洁的总结回复。不要调用任何工具。".to_string(),
             tool_calls: None,
             tool_call_id: None,
+            reasoning_content: None,
         });
 
         match client

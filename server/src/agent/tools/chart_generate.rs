@@ -86,12 +86,14 @@ impl OfficeTool for ChartGenerateTool {
                 content: system_prompt.into(),
                 tool_calls: None,
                 tool_call_id: None,
+                reasoning_content: None,
             },
             ChatMessage {
                 role: "user".into(),
                 content: user_prompt,
                 tool_calls: None,
                 tool_call_id: None,
+                reasoning_content: None,
             },
         ];
 

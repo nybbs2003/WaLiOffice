@@ -258,6 +258,7 @@ impl LlmClient {
             content: "当前模型或接口暂未成功处理本次图片视觉输入。不要假装已经看到了图片内容；请明确告知用户当前限制，并优先依据 OCR 文本、图片中的关键区域说明或用户补充描述继续回答。".to_string(),
             tool_calls: None,
             tool_call_id: None,
+            reasoning_content: None,
         });
         let fallback_req = ChatCompletionRequest {
             model: self.model.clone(),

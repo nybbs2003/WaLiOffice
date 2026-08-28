@@ -811,6 +811,7 @@ async fn test_text_capability(
         content: serde_json::Value::String("请调用 get_current_time 工具告诉我现在几点。".into()),
         tool_calls: None,
         tool_call_id: None,
+        reasoning_content: None,
     }];
     let req_body = ChatCompletionRequest {
         model: model.to_string(),

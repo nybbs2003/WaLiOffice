@@ -94,12 +94,14 @@ pub async fn summary_compact(
             content: "你是对话摘要助手。请简洁总结以下对话的关键信息，保留用户需求、已完成的工具调用和关键结论。不要编造信息。".to_string(),
             tool_calls: None,
             tool_call_id: None,
+            reasoning_content: None,
         },
         ChatMessage {
             role: "user".to_string(),
             content: format!("请总结以下对话历史：\n{old_content}\n\n返回简洁摘要（200字以内）："),
             tool_calls: None,
             tool_call_id: None,
+            reasoning_content: None,
         },
     ];
 
@@ -118,6 +120,7 @@ pub async fn summary_compact(
                 content: format!("[对话摘要] {summary}"),
                 tool_calls: None,
                 tool_call_id: None,
+                reasoning_content: None,
             }];
             result.extend(recent_messages);
             result

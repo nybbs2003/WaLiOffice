@@ -261,6 +261,9 @@ pub struct ChatMessage {
     pub tool_calls: Option<Vec<serde_json::Value>>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub tool_call_id: Option<String>,
+    /// 思考模型（DeepSeek-R1 / Kimi K3 等）的推理过程，多轮工具调用需原样回传
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub reasoning_content: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

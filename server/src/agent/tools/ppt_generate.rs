@@ -631,12 +631,14 @@ async fn generate_plan_with_llm(
             content: "你只输出严格 JSON。".into(),
             tool_calls: None,
             tool_call_id: None,
+            reasoning_content: None,
         },
         ChatMessage {
             role: "user".into(),
             content: prompt,
             tool_calls: None,
             tool_call_id: None,
+            reasoning_content: None,
         },
     ];
     let resp = client.chat(&messages, None).await?;

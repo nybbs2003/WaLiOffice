@@ -345,6 +345,7 @@ pub async fn get_messages(pool: &DbPool, session_id: &str, limit: i64) -> AppRes
             content,
             tool_calls,
             tool_call_id,
+            reasoning_content: None,
         });
     }
     Ok(result)

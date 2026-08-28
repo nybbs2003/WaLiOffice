@@ -159,12 +159,14 @@ impl OfficeTool for PptPlanTool {
                 content: "你只输出严格 JSON。".to_string(),
                 tool_calls: None,
                 tool_call_id: None,
+                reasoning_content: None,
             },
             ChatMessage {
                 role: "user".to_string(),
                 content: prompt,
                 tool_calls: None,
                 tool_call_id: None,
+                reasoning_content: None,
             },
         ];
 
