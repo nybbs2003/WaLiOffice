@@ -788,12 +788,14 @@ impl OfficeTool for VideoGenerateTool {
 
         // 请求体：按厂商分派（Agnes 用 prompt/seconds/aspect_ratio；火山方舟用 content 数组）
         let mut request_body = if is_volc {
-            // 火山方舟 Seedance：content 数组 + resolution + duration + ratio
+            // 火山方舟 Seedance：content 数组（text + 图片参考）+ resolution + duration + ratio
+            let mut content_arr = vec![json!({ "type": "text", "text": plan.prompt.clone() })];
+            for img in &image_inputs {
+                content_arr.push(json!({ "type": "image_url", "image_url": { "url": img }, "role": "reference_image" }));
+            }
             json!({
                 "model": video_model.as_str(),
-                "content": [
-                    { "type": "text", "text": plan.prompt.clone() }
-                ],
+                "content": content_arr,
                 "resolution": size_label.to_lowercase(),
                 "duration": plan.seconds,
                 "ratio": plan.aspect_ratio.clone(),

@@ -896,14 +896,26 @@ async fn test_image_capability(
         .build()
         .map_err(|e| AppError::Internal(anyhow::anyhow!("构建 HTTP 客户端失败: {e}")))?;
 
-    // 极小参数：1 张最小尺寸（火山方舟要求 ≥ 921600 像素，用 1280x720 兼容）
+    // 极小参数：按厂商分派（火山方舟 size 用 "2K"，其他用 "1024x1024"）
+    let is_volc = crate::agent::tools::agnes_media::detect_video_vendor(base_url)
+        == crate::agent::tools::agnes_media::VideoVendor::Volcengine;
     let endpoint = build_endpoint(base_url, "images/generations");
-    let body = json!({
-        "model": model,
-        "prompt": "a single red circle",
-        "size": "1280x720",
-        "n": 1,
-    });
+    let body = if is_volc {
+        json!({
+            "model": model,
+            "prompt": "a single red circle",
+            "size": "2K",
+            "response_format": "url",
+            "watermark": true,
+        })
+    } else {
+        json!({
+            "model": model,
+            "prompt": "a single red circle",
+            "size": "1024x1024",
+            "n": 1,
+        })
+    };
 
     let resp = client
         .post(&endpoint)

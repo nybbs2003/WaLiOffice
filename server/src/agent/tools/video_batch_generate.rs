@@ -220,7 +220,7 @@ impl OfficeTool for VideoBatchGenerateTool {
                 let mut content_arr = vec![json!({ "type": "text", "text": shot.prompt.clone() })];
                 if !shot.reference_images.is_empty() {
                     for img in &shot.reference_images {
-                        content_arr.push(json!({ "type": "image_url", "image_url": { "url": img } }));
+                        content_arr.push(json!({ "type": "image_url", "image_url": { "url": img }, "role": "reference_image" }));
                     }
                 }
                 json!({

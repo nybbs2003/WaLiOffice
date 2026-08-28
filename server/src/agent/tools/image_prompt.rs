@@ -346,9 +346,57 @@ impl OfficeTool for ImagePromptTool {
         };
         let image_model = agnes_image_model(&ctx.user_id).await;
         let endpoint = credentials.endpoint("images/generations");
+        let is_volc = credentials.video_vendor() == crate::agent::tools::agnes_media::VideoVendor::Volcengine;
         let client = match http_client(Duration::from_secs(240)) {
             Ok(client) => client,
-            Err(err) => return ToolResult::err(format!("初始化 Agnes 客户端失败: {err}")),
+            Err(err) => return ToolResult::err(format!("初始化图像客户端失败: {err}")),
+        };
+
+        // 按厂商构建图片生成请求体
+        let build_image_body = |prompt: &str, img2img: bool, spec: ImageOutputSpec| -> serde_json::Value {
+            if is_volc {
+                // 火山方舟 Seedream：size（2K/1K）+ response_format + watermark 顶层参数
+                let mut body = json!({
+                    "model": image_model.as_str(),
+                    "prompt": prompt,
+                    "size": spec.size,
+                    "response_format": "url",
+                    "watermark": true,
+                });
+                if img2img && !image_inputs.is_empty() {
+                    // 火山方舟图生图：image 参数（string 或 string[]）
+                    let image_val = if image_inputs.len() == 1 {
+                        json!(image_inputs[0].clone())
+                    } else {
+                        json!(image_inputs.clone())
+                    };
+                    body["image"] = image_val;
+                }
+                body
+            } else if img2img {
+                // Agnes 图生图
+                json!({
+                    "model": image_model.as_str(),
+                    "prompt": prompt,
+                    "size": spec.size,
+                    "ratio": spec.ratio,
+                    "extra_body": {
+                        "response_format": "url",
+                        "image": image_inputs.clone()
+                    }
+                })
+            } else {
+                // Agnes 文生图
+                json!({
+                    "model": image_model.as_str(),
+                    "prompt": prompt,
+                    "size": spec.size,
+                    "ratio": spec.ratio,
+                    "extra_body": {
+                        "response_format": "url"
+                    }
+                })
+            }
         };
 
         let variants = plan.prompts.into_iter().take(3).collect::<Vec<_>>();
@@ -371,28 +419,7 @@ impl OfficeTool for ImagePromptTool {
                 }),
             );
 
-            let request_body = if wants_image_to_image {
-                json!({
-                    "model": image_model.as_str(),
-                    "prompt": variant.prompt,
-                    "size": output_spec.size,
-                    "ratio": output_spec.ratio,
-                    "extra_body": {
-                        "response_format": "url",
-                        "image": image_inputs.clone()
-                    }
-                })
-            } else {
-                json!({
-                    "model": image_model.as_str(),
-                    "prompt": variant.prompt,
-                    "size": output_spec.size,
-                    "ratio": output_spec.ratio,
-                    "extra_body": {
-                        "response_format": "url"
-                    }
-                })
-            };
+            let request_body = build_image_body(&variant.prompt, wants_image_to_image, output_spec);
 
             let response =
                 match generate_agnes_image(&client, &endpoint, &credentials, &request_body)
@@ -451,28 +478,8 @@ impl OfficeTool for ImagePromptTool {
             let fallback_prompt = format!(
                 "Create a clear, high quality image for this user request: {topic}. Use a simple strong composition, recognizable main subject, polished lighting, and appealing visual details."
             );
-            let fallback_body = if wants_image_to_image {
-                json!({
-                    "model": image_model.as_str(),
-                    "prompt": fallback_prompt,
-                    "size": output_spec.size,
-                    "ratio": output_spec.ratio,
-                    "extra_body": {
-                        "response_format": "url",
-                        "image": image_inputs.clone()
-                    }
-                })
-            } else {
-                json!({
-                    "model": image_model.as_str(),
-                    "prompt": fallback_prompt,
-                    "size": "1K",
-                    "ratio": "1:1",
-                    "extra_body": {
-                        "response_format": "url"
-                    }
-                })
-            };
+            let fallback_spec = ImageOutputSpec { size: "1K", ratio: "1:1" };
+            let fallback_body = build_image_body(&fallback_prompt, wants_image_to_image, fallback_spec);
             match generate_agnes_image(&client, &endpoint, &credentials, &fallback_body)
                 .await
             {
