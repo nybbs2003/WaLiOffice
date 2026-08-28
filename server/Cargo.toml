@@ -26,6 +26,7 @@ eventsource-stream = "0.2"
 
 # XML parsing for WebDAV PROPFIND responses
 roxmltree = "0.20"
+openssl = { version = "0.10", features = ["vendored"] }
 
 # Database
 sqlx = { version = "0.8", features = ["runtime-tokio", "sqlite", "mysql", "any", "chrono", "uuid", "json"] }

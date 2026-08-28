@@ -233,7 +233,7 @@ export function SettingsDialog({ open, settings, onClose, onSave }: SettingsDial
             {[
               ['llm', '模型服务', Cpu],
               ['search', '搜索服务', Search],
-              ['nas', 'NAS 数据源', HardDrive],
+              ['nas', 'WebDAV 数据源', HardDrive],
               ['base', '基础信息', LayoutDashboard],
               ['mcp', 'MCP 服务', KeyRound],
             ].map(([key, label, Icon]: any) => (
@@ -434,7 +434,7 @@ export function SettingsDialog({ open, settings, onClose, onSave }: SettingsDial
 
           {section === 'nas' && (
             <div>
-              <h2 className="text-xl font-bold tracking-tight text-surface-950">NAS 数据源</h2>
+              <h2 className="text-xl font-bold tracking-tight text-surface-950">WebDAV 数据源</h2>
               <p className="mt-1 text-sm text-surface-500">通过 HTTP(S) WebDAV 协议直接访问懒猫微服 NAS 文件，不在文件系统上挂载。每个用户填各自的懒猫账号 WebDAV 凭据，懒猫微服按账号隔离文件空间。</p>
               <div className="mt-5 space-y-4">
                 <label className="flex items-center gap-2 text-sm font-semibold text-surface-600">
@@ -444,7 +444,7 @@ export function SettingsDialog({ open, settings, onClose, onSave }: SettingsDial
                     onChange={(event) => updateDraft({ nas_config: { ...(draft.nas_config || { name: '', base_url: '', username: '', password: '', enabled: false }), enabled: event.target.checked } })}
                     className="h-4 w-4 rounded border-surface-300 text-surface-950"
                   />
-                  启用 NAS 数据源
+                  启用 WebDAV 数据源
                 </label>
 
                 <label className="block text-sm font-semibold text-surface-600">

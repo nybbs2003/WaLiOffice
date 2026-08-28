@@ -4,6 +4,10 @@ use serde_json::json;
 use crate::agent::tool::{OfficeTool, ToolArtifact, ToolContext, ToolResult};
 use crate::models::NasConfig;
 
+/// Let's Encrypt 新增根证书（Root YE + ISRG Root X2，2025 年新中间证书体系），
+/// macOS 系统 CA bundle 尚未收录，懒猫微服 *.heiyu.space 证书链需要它。
+const LE_NEW_ROOTS_PEM: &str = include_str!("../../../assets/le-new-roots.pem");
+
 /// 读取当前用户的 NAS 访问凭据（按 user_id 隔离，多租户互不冲突；纯 HTTP(S) 请求，不挂载文件系统）
 async fn get_nas_config(ctx: &ToolContext) -> anyhow::Result<NasConfig> {
     let pool = crate::state::db_pool();
@@ -13,21 +17,171 @@ async fn get_nas_config(ctx: &ToolContext) -> anyhow::Result<NasConfig> {
     let cfg = settings.nas_config;
     if !cfg.enabled || cfg.base_url.is_empty() {
         return Err(anyhow::anyhow!(
-            "尚未配置 NAS 数据源，请先在「设置 → 数据源」中填写懒猫微服 WebDAV 地址与凭据"
+            "尚未配置 WebDAV 数据源，请先在「设置 → 数据源」中填写懒猫微服 WebDAV 地址与凭据"
         ));
     }
     if cfg.username.is_empty() {
-        return Err(anyhow::anyhow!("NAS 数据源缺少用户名"));
+        return Err(anyhow::anyhow!("WebDAV 数据源缺少用户名"));
     }
     Ok(cfg)
 }
 
-/// 构造带 Basic Auth 的 reqwest client
-fn dav_client() -> reqwest::Client {
-    reqwest::Client::builder()
-        .timeout(std::time::Duration::from_secs(30))
-        .build()
-        .unwrap_or_default()
+/// 用 openssl 建立 TLS 连接（同步，跑在 spawn_blocking 里）。
+/// 不依赖 security-framework（懒猫 NE 会拦截 security-framework 的 TLS → -9806 errSecIO），
+/// 用 openssl 独立 TLS 栈 + 系统 CA + Let's Encrypt 新根证书。
+fn connect_dav_tls(host: &str, port: u16) -> anyhow::Result<openssl::ssl::SslStream<std::net::TcpStream>> {
+    use openssl::ssl::{SslConnector, SslMethod, SslVerifyMode};
+    use openssl::x509::store::X509StoreBuilder;
+
+    let mut builder = SslConnector::builder(SslMethod::tls())?;
+    builder.set_verify(SslVerifyMode::PEER);
+    let mut store = X509StoreBuilder::new()?;
+    store.set_default_paths()?;
+    // 显式加载系统 CA（macOS /etc/ssl/cert.pem），vendored openssl 默认路径不含它
+    for sys_ca in ["/etc/ssl/cert.pem", "/etc/ssl/certs/ca-certificates.crt", "/usr/local/etc/openssl/cert.pem"] {
+        if std::path::Path::new(sys_ca).exists() {
+            if let Ok(certs) = openssl::x509::X509::stack_from_pem(std::fs::read(sys_ca).unwrap_or_default().as_slice()) {
+                for cert in certs {
+                    let _ = store.add_cert(cert);
+                }
+            }
+        }
+    }
+    // 追加 Let's Encrypt 新根（Root YE + ISRG Root X2），补系统 CA 的缺失
+    let certs = openssl::x509::X509::stack_from_pem(LE_NEW_ROOTS_PEM.as_bytes())?;
+    for cert in certs {
+        let _ = store.add_cert(cert);
+    }
+    builder.set_verify_cert_store(store.build())?;
+    let connector = builder.build();
+
+    let stream = std::net::TcpStream::connect((host, port))?;
+    stream.set_read_timeout(Some(std::time::Duration::from_secs(30)))?;
+    stream.set_write_timeout(Some(std::time::Duration::from_secs(30)))?;
+    let ssl = connector.connect(host, stream)?;
+    Ok(ssl)
+}
+
+/// 同步 WebDAV HTTP 请求（openssl TLS + 手写 HTTP/1.1）。
+/// 返回 (status_code, response_body)。
+fn dav_http_request(
+    method: &str,
+    url: &str,
+    username: &str,
+    password: &str,
+    body: Option<&str>,
+) -> anyhow::Result<(u16, String)> {
+    use std::io::{Read, Write};
+
+    // 解析 URL
+    let url = url.trim();
+    let (scheme, rest) = url
+        .split_once("://")
+        .ok_or_else(|| anyhow::anyhow!("非法 URL（缺少协议）: {url}"))?;
+    if scheme != "https" && scheme != "http" {
+        return Err(anyhow::anyhow!("仅支持 http/https 协议: {scheme}"));
+    }
+    let (host, path) = rest
+        .split_once('/')
+        .map(|(h, p)| (h, format!("/{p}")))
+        .unwrap_or((rest, "/".to_string()));
+    let (host, port) = if let Some((h, p)) = host.split_once(':') {
+        (h.to_string(), p.parse::<u16>()?)
+    } else {
+        (host.to_string(), if scheme == "https" { 443 } else { 80 })
+    };
+
+    // Basic Auth
+    let auth = base64::encode(format!("{username}:{password}"));
+
+    // 组装请求
+    let body = body.unwrap_or("");
+    let mut req = format!(
+        "{method} {path} HTTP/1.1\r\nHost: {host}\r\nAuthorization: Basic {auth}\r\nConnection: close\r\n"
+    );
+    if method == "PROPFIND" {
+        req.push_str("Depth: 1\r\n");
+    }
+    if !body.is_empty() {
+        req.push_str(&format!("Content-Type: application/xml\r\nContent-Length: {}\r\n", body.len()));
+    } else {
+        req.push_str("Content-Length: 0\r\n");
+    }
+    req.push_str("\r\n");
+    req.push_str(body);
+
+    // TLS 连接（openssl）
+    let mut ssl = connect_dav_tls(&host, port)?;
+    ssl.write_all(req.as_bytes())?;
+
+    let mut resp = Vec::new();
+    ssl.read_to_end(&mut resp)?;
+    let resp_str = String::from_utf8_lossy(&resp).to_string();
+
+    // 解析状态码
+    let status_line = resp_str.lines().next().unwrap_or("");
+    let status = status_line
+        .split_whitespace()
+        .nth(1)
+        .and_then(|s| s.parse::<u16>().ok())
+        .ok_or_else(|| anyhow::anyhow!("无法解析 HTTP 状态行: {status_line}"))?;
+
+    // 分离 header 和 body
+    let (header_part, body_part) = resp_str
+        .split_once("\r\n\r\n")
+        .ok_or_else(|| anyhow::anyhow!("响应缺少 header/body 分隔"))?;
+
+    // 处理 Transfer-Encoding: chunked
+    let headers = header_part.to_lowercase();
+    let body = if headers.contains("transfer-encoding: chunked") {
+        decode_chunked(body_part.as_bytes())
+    } else {
+        body_part.to_string()
+    };
+
+    Ok((status, body))
+}
+
+/// 解码 HTTP chunked 编码的 body
+fn decode_chunked(data: &[u8]) -> String {
+    let mut out = Vec::new();
+    let mut i = 0;
+    while i < data.len() {
+        // 读 chunk size（十六进制，到 \r\n）
+        let line_end = data[i..]
+            .windows(2)
+            .position(|w| w == b"\r\n")
+            .map(|p| i + p)
+            .unwrap_or(data.len());
+        let size_str = String::from_utf8_lossy(&data[i..line_end]);
+        let size = usize::from_str_radix(size_str.trim(), 16).unwrap_or(0);
+        if size == 0 {
+            break; // 终止 chunk
+        }
+        i = line_end + 2; // 跳过 size 行
+        out.extend_from_slice(&data[i..(i + size).min(data.len())]);
+        i += size;
+        // 跳过 chunk 后的 \r\n
+        if i + 2 <= data.len() && data[i..i + 2] == *b"\r\n" {
+            i += 2;
+        }
+    }
+    String::from_utf8_lossy(&out).to_string()
+}
+
+/// 异步包装：把同步 openssl 请求放到 spawn_blocking（避免阻塞 tokio 线程）。
+async fn dav_request(
+    method: &'static str,
+    url: String,
+    username: String,
+    password: String,
+    body: Option<String>,
+) -> anyhow::Result<(u16, String)> {
+    tokio::task::spawn_blocking(move || {
+        dav_http_request(method, &url, &username, &password, body.as_deref())
+    })
+    .await
+    .map_err(|e| anyhow::anyhow!("WebDAV 任务执行失败: {e}"))?
 }
 
 /// 拼接 WebDAV 路径（去掉末尾/开头的多余斜杠）
@@ -57,7 +211,7 @@ fn sanitize_path(path: &str) -> anyhow::Result<String> {
 /// 用于前端「测试连接」按钮。纯 HTTP(S) 请求，不挂载文件系统。
 pub async fn test_nas_connection(cfg: &NasConfig) -> anyhow::Result<usize> {
     if !cfg.enabled || cfg.base_url.trim().is_empty() {
-        return Err(anyhow::anyhow!("请先填写并启用 NAS 数据源（WebDAV 地址）"));
+        return Err(anyhow::anyhow!("请先填写并启用 WebDAV 数据源"));
     }
     if cfg.username.trim().is_empty() {
         return Err(anyhow::anyhow!("请填写 WebDAV 用户名"));
@@ -75,15 +229,8 @@ async fn dav_list(
     rel_path: &str,
 ) -> anyhow::Result<Vec<serde_json::Value>> {
     let full_path = match sanitize_path(rel_path) { Ok(p) => p, Err(e) => return Err(e) };
-    let client = dav_client();
     let url = join_url(&cfg.base_url, &full_path);
-    let resp = client
-        .request(reqwest::Method::from_bytes(b"PROPFIND").unwrap(), &url)
-        .basic_auth(&cfg.username, Some(&cfg.password))
-        .header("Depth", "1")
-        .header("Content-Type", "application/xml")
-        .body(
-            r#"<?xml version="1.0" encoding="utf-8"?>
+    let body = r#"<?xml version="1.0" encoding="utf-8"?>
 <d:propfind xmlns:d="DAV:">
   <d:prop>
     <d:displayname/>
@@ -91,18 +238,21 @@ async fn dav_list(
     <d:getcontentlength/>
     <d:getlastmodified/>
   </d:prop>
-</d:propfind>"#,
-        )
-        .send()
-        .await?;
+</d:propfind>"#;
+    let (status, resp_body) = dav_request(
+        "PROPFIND",
+        url,
+        cfg.username.clone(),
+        cfg.password.clone(),
+        Some(body.to_string()),
+    )
+    .await?;
 
-    let status = resp.status();
-    let body = resp.text().await?;
-    if !status.is_success() {
-        return Err(anyhow::anyhow!("WebDAV 请求失败（HTTP {status}）: {}", body.chars().take(300).collect::<String>()));
+    if !(200..300).contains(&status) {
+        return Err(anyhow::anyhow!("WebDAV 请求失败（HTTP {status}）: {}", resp_body.chars().take(300).collect::<String>()));
     }
 
-    parse_propfind_response(&body)
+    parse_propfind_response(&resp_body)
 }
 
 /// 解析 PROPFIND 的 multistatus XML
@@ -174,42 +324,34 @@ fn parse_propfind_response(body: &str) -> anyhow::Result<Vec<serde_json::Value>>
 /// GET 读取文件内容
 async fn dav_read(cfg: &NasConfig, rel_path: &str) -> anyhow::Result<(String, String)> {
     let full_path = match sanitize_path(rel_path) { Ok(p) => p, Err(e) => return Err(e) };
-    let client = dav_client();
     let url = join_url(&cfg.base_url, &full_path);
-    let resp = client
-        .get(&url)
-        .basic_auth(&cfg.username, Some(&cfg.password))
-        .send()
-        .await?;
-    let status = resp.status();
-    let content_type = resp
-        .headers()
-        .get("content-type")
-        .and_then(|v| v.to_str().ok())
-        .unwrap_or("application/octet-stream")
-        .to_string();
-    let bytes = resp.bytes().await?;
-    if !status.is_success() {
+    let (status, body) = dav_request(
+        "GET",
+        url,
+        cfg.username.clone(),
+        cfg.password.clone(),
+        None,
+    )
+    .await?;
+    if !(200..300).contains(&status) {
         return Err(anyhow::anyhow!("读取文件失败（HTTP {status}）"));
     }
-    let text = String::from_utf8_lossy(&bytes).to_string();
-    Ok((text, content_type))
+    Ok((body, "text/plain".to_string()))
 }
 
 /// PUT 写入文件
 async fn dav_write(cfg: &NasConfig, rel_path: &str, content: &str) -> anyhow::Result<()> {
     let full_path = match sanitize_path(rel_path) { Ok(p) => p, Err(e) => return Err(e) };
-    let client = dav_client();
     let url = join_url(&cfg.base_url, &full_path);
-    let resp = client
-        .put(&url)
-        .basic_auth(&cfg.username, Some(&cfg.password))
-        .body(content.to_string())
-        .send()
-        .await?;
-    let status = resp.status();
-    if !status.is_success() {
-        let body = resp.text().await.unwrap_or_default();
+    let (status, body) = dav_request(
+        "PUT",
+        url,
+        cfg.username.clone(),
+        cfg.password.clone(),
+        Some(content.to_string()),
+    )
+    .await?;
+    if !(200..300).contains(&status) {
         return Err(anyhow::anyhow!("写入文件失败（HTTP {status}）: {}", body.chars().take(200).collect::<String>()));
     }
     Ok(())
@@ -218,17 +360,17 @@ async fn dav_write(cfg: &NasConfig, rel_path: &str, content: &str) -> anyhow::Re
 /// MKCOL 建目录
 async fn dav_mkdir(cfg: &NasConfig, rel_path: &str) -> anyhow::Result<()> {
     let full_path = match sanitize_path(rel_path) { Ok(p) => p, Err(e) => return Err(e) };
-    let client = dav_client();
     let url = join_url(&cfg.base_url, &full_path);
-    let resp = client
-        .request(reqwest::Method::from_bytes(b"MKCOL").unwrap(), &url)
-        .basic_auth(&cfg.username, Some(&cfg.password))
-        .send()
-        .await?;
-    let status = resp.status();
+    let (status, body) = dav_request(
+        "MKCOL",
+        url,
+        cfg.username.clone(),
+        cfg.password.clone(),
+        None,
+    )
+    .await?;
     // 201 Created / 405 已存在都算可接受
-    if !status.is_success() && status.as_u16() != 405 {
-        let body = resp.text().await.unwrap_or_default();
+    if !(200..300).contains(&status) && status != 405 {
         return Err(anyhow::anyhow!("创建目录失败（HTTP {status}）: {}", body.chars().take(200).collect::<String>()));
     }
     Ok(())
@@ -262,7 +404,7 @@ impl OfficeTool for NasListTool {
     }
 
     fn description(&self) -> &str {
-        "列出懒猫微服 NAS（WebDAV）指定目录的文件与子目录。path 为空时列根目录。凭据按用户隔离，只访问当前用户自己的 NAS 数据源。"
+        "列出懒猫微服 NAS（WebDAV）指定目录的文件与子目录。path 为空时列根目录。凭据按用户隔离，只访问当前用户自己的 WebDAV 数据源。"
     }
 
     fn parameters(&self) -> serde_json::Value {
