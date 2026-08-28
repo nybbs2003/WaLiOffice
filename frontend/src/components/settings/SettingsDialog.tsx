@@ -497,9 +497,9 @@ export function SettingsDialog({ open, settings, onClose, onSave }: SettingsDial
                 </button>
 
                 {nasTestResult && (
-                  <p className={`rounded-lg px-3 py-2 text-sm ${nasTestResult.ok ? 'bg-emerald-50 text-emerald-700' : 'bg-red-50 text-red-600'}`}>
+                  <div className={`rounded-lg px-3 py-2 text-sm break-all whitespace-pre-wrap leading-relaxed ${nasTestResult.ok ? 'bg-emerald-50 text-emerald-700' : 'bg-red-50 text-red-600'}`}>
                     {nasTestResult.message}
-                  </p>
+                  </div>
                 )}
 
                 <p className="rounded-lg bg-surface-50 px-3 py-2 text-xs text-surface-400">

@@ -653,7 +653,7 @@ async fn test_nas(
         }))),
         Err(e) => Ok(Json(json!({
             "ok": false,
-            "message": format!("连接失败：{e}"),
+            "message": format!("连接失败：{e:#}"),
         }))),
     }
 }

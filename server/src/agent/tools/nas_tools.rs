@@ -249,7 +249,16 @@ async fn dav_list(
     .await?;
 
     if !(200..300).contains(&status) {
-        return Err(anyhow::anyhow!("WebDAV 请求失败（HTTP {status}）: {}", resp_body.chars().take(300).collect::<String>()));
+        let detail = match status {
+            401 => "用户名或密码错误（认证失败）".to_string(),
+            403 => "没有访问权限（账号无该目录权限）".to_string(),
+            404 => "路径不存在".to_string(),
+            405 => "该操作不被允许（WebDAV 方法不支持）".to_string(),
+            500..=599 => format!("服务器内部错误（{status}）"),
+            _ => format!("HTTP {status}"),
+        };
+        let body_hint = if resp_body.trim().is_empty() { String::new() } else { format!(": {}", resp_body.chars().take(200).collect::<String>()) };
+        return Err(anyhow::anyhow!("WebDAV 请求失败（{detail}）{body_hint}"));
     }
 
     parse_propfind_response(&resp_body)
