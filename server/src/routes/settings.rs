@@ -6,7 +6,7 @@ use serde_json::json;
 use crate::auth::middleware::AuthUser;
 use crate::db::settings_repo;
 use crate::error::AppError;
-use crate::models::{AppSettings, BasicSettings, LlmProfileConfig, McpServerConfig};
+use crate::models::{AppSettings, BasicSettings, LlmProfileConfig, McpServerConfig, NasConfig};
 use crate::state;
 use eventsource_stream::Eventsource;
 use futures::StreamExt;
@@ -16,6 +16,7 @@ pub fn router() -> Router {
         .route("/api/settings", get(get_settings).put(save_settings))
         .route("/api/settings/mcp/test", post(test_mcp_service))
         .route("/api/settings/fetch-models", post(fetch_models))
+        .route("/api/settings/nas/test", post(test_nas))
 }
 
 #[derive(Debug, Deserialize)]
@@ -637,4 +638,22 @@ async fn fetch_models(
         "拉取模型列表失败：{}",
         last_err.unwrap_or_else(|| "未知错误".into())
     )))
+}
+
+/// 测试 NAS（WebDAV）连接：用前端提交的凭据发 PROPFIND，验证地址/账号/密码是否可连通。
+async fn test_nas(
+    _user: AuthUser,
+    Json(cfg): Json<NasConfig>,
+) -> Result<Json<serde_json::Value>, AppError> {
+    match crate::agent::tools::nas_tools::test_nas_connection(&cfg).await {
+        Ok(count) => Ok(Json(json!({
+            "ok": true,
+            "item_count": count,
+            "message": format!("连接成功，根目录下有 {count} 个文件/目录"),
+        }))),
+        Err(e) => Ok(Json(json!({
+            "ok": false,
+            "message": format!("连接失败：{e}"),
+        }))),
+    }
 }

@@ -53,6 +53,22 @@ fn sanitize_path(path: &str) -> anyhow::Result<String> {
     Ok(rel.to_string())
 }
 
+/// 测试 NAS（WebDAV）连接：对根目录发 PROPFIND，返回目录项数量。
+/// 用于前端「测试连接」按钮。纯 HTTP(S) 请求，不挂载文件系统。
+pub async fn test_nas_connection(cfg: &NasConfig) -> anyhow::Result<usize> {
+    if !cfg.enabled || cfg.base_url.trim().is_empty() {
+        return Err(anyhow::anyhow!("请先填写并启用 NAS 数据源（WebDAV 地址）"));
+    }
+    if cfg.username.trim().is_empty() {
+        return Err(anyhow::anyhow!("请填写 WebDAV 用户名"));
+    }
+    if cfg.password.is_empty() {
+        return Err(anyhow::anyhow!("请填写 WebDAV 密码"));
+    }
+    let files = dav_list(cfg, "").await?;
+    Ok(files.len())
+}
+
 /// PROPFIND 列目录（Depth: 1），返回 (名称, 是否目录, 大小, 最后修改)
 async fn dav_list(
     cfg: &NasConfig,

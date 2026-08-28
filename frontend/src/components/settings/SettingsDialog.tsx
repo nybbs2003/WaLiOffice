@@ -44,6 +44,8 @@ export function SettingsDialog({ open, settings, onClose, onSave }: SettingsDial
   const [saving, setSaving] = useState(false)
   const [testingMcpId, setTestingMcpId] = useState<string | null>(null)
   const [mcpTestResults, setMcpTestResults] = useState<Record<string, { ok: boolean; message: string; tools: string[] }>>({})
+  const [testingNas, setTestingNas] = useState(false)
+  const [nasTestResult, setNasTestResult] = useState<{ ok: boolean; message: string } | null>(null)
   const [fetchingModelProfile, setFetchingModelProfile] = useState<string | null>(null)
   const [fetchModelError, setFetchModelError] = useState('')
   const [fetchedModelsMap, setFetchedModelsMap] = useState<Record<string, string[]>>({})
@@ -176,6 +178,26 @@ export function SettingsDialog({ open, settings, onClose, onSave }: SettingsDial
       }))
     } finally {
       setTestingMcpId(null)
+    }
+  }
+
+  const testNas = async () => {
+    if (!draft?.nas_config) return
+    setTestingNas(true)
+    setNasTestResult(null)
+    try {
+      const res = await settingsApi.testNas(draft.nas_config)
+      setNasTestResult({
+        ok: !!res.data?.ok,
+        message: res.data?.message || '测试完成',
+      })
+    } catch (err: any) {
+      setNasTestResult({
+        ok: false,
+        message: err.response?.data?.detail || err.message || '测试失败',
+      })
+    } finally {
+      setTestingNas(false)
     }
   }
 
@@ -464,6 +486,21 @@ export function SettingsDialog({ open, settings, onClose, onSave }: SettingsDial
                     />
                   </label>
                 </div>
+
+                <button
+                  type="button"
+                  onClick={testNas}
+                  disabled={testingNas}
+                  className="flex items-center gap-2 rounded-2xl border border-surface-300 bg-white px-4 py-2 text-sm font-semibold text-surface-700 transition hover:bg-surface-50 disabled:cursor-not-allowed disabled:opacity-50"
+                >
+                  {testingNas ? '测试中...' : '测试连接'}
+                </button>
+
+                {nasTestResult && (
+                  <p className={`rounded-lg px-3 py-2 text-sm ${nasTestResult.ok ? 'bg-emerald-50 text-emerald-700' : 'bg-red-50 text-red-600'}`}>
+                    {nasTestResult.message}
+                  </p>
+                )}
 
                 <p className="rounded-lg bg-surface-50 px-3 py-2 text-xs text-surface-400">
                   懒猫微服 WebDAV 通过 HTTP(S) 协议直接访问，无需在文件系统挂载。每个懒猫账号的 WebDAV 用户名/密码对应其自己的文件空间（用户文稿目录），因此不同用户填各自的凭据即天然隔离，无需额外配置目录路径。
