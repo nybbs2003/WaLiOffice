@@ -17,10 +17,18 @@ pub fn router() -> Router {
         .route("/api/settings/mcp/test", post(test_mcp_service))
         .route("/api/settings/fetch-models", post(fetch_models))
         .route("/api/settings/nas/test", post(test_nas))
+        .route("/api/settings/media/test", post(test_media_model))
 }
 
 #[derive(Debug, Deserialize)]
 struct FetchModelsReq {
+    base_url: String,
+    #[serde(default)]
+    api_key: String,
+}
+
+#[derive(Debug, Deserialize)]
+struct TestMediaReq {
     base_url: String,
     #[serde(default)]
     api_key: String,
@@ -668,4 +676,72 @@ async fn test_nas(
             "message": format!("连接失败：{e:#}"),
         }))),
     }
+}
+
+/// 测试多模态（图片/视频）模型连接：探测 /models 端点，验证 base_url + api_key 是否连通。
+async fn test_media_model(
+    _user: AuthUser,
+    Json(req): Json<TestMediaReq>,
+) -> Result<Json<serde_json::Value>, AppError> {
+    let base_url = req.base_url.trim().trim_end_matches('/').to_string();
+    if base_url.is_empty() {
+        return Err(AppError::BadRequest("Base URL 不能为空".into()));
+    }
+
+    let client = reqwest::Client::builder()
+        .timeout(std::time::Duration::from_secs(20))
+        .build()
+        .map_err(|e| AppError::Internal(anyhow::anyhow!("构建 HTTP 客户端失败: {e}")))?;
+
+    // 兼容 /models 和 /v1/models
+    let endpoints = vec![format!("{base_url}/models"), format!("{base_url}/v1/models")];
+
+    let mut last_err: Option<String> = None;
+    for endpoint in endpoints {
+        let mut builder = client.get(&endpoint);
+        if !req.api_key.trim().is_empty() {
+            builder = builder.header("Authorization", format!("Bearer {}", req.api_key.trim()));
+        }
+        match builder.send().await {
+            Ok(resp) => {
+                let status = resp.status();
+                if status.is_success() {
+                    let json: serde_json::Value = resp.json().await.unwrap_or(serde_json::Value::Null);
+                    let mut names = Vec::new();
+                    if let Some(arr) = json.get("data").and_then(|v| v.as_array()) {
+                        for item in arr {
+                            if let Some(id) = item.get("id").and_then(|v| v.as_str()) {
+                                names.push(id.to_string());
+                            }
+                        }
+                    }
+                    if let Some(arr) = json.get("models").and_then(|v| v.as_array()) {
+                        for item in arr {
+                            if let Some(name) = item.get("name").and_then(|v| v.as_str()) {
+                                names.push(name.to_string());
+                            }
+                        }
+                    }
+                    return Ok(Json(json!({
+                        "ok": true,
+                        "model_count": names.len(),
+                        "models": names.iter().take(20).collect::<Vec<_>>(),
+                        "message": if names.is_empty() { "连接成功（服务可用，未返回模型列表）".to_string() } else { format!("连接成功，返回 {} 个模型", names.len()) },
+                    })));
+                } else if status.as_u16() == 401 || status.as_u16() == 403 {
+                    last_err = Some(format!("认证失败（HTTP {}），请检查 API Key", status.as_u16()));
+                } else {
+                    last_err = Some(format!("HTTP {}", status.as_u16()));
+                }
+            }
+            Err(e) => {
+                last_err = Some(format!("请求失败: {e}"));
+            }
+        }
+    }
+
+    Ok(Json(json!({
+        "ok": false,
+        "message": format!("连接失败：{}", last_err.unwrap_or_else(|| "未知错误".into())),
+    })))
 }

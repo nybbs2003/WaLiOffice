@@ -103,6 +103,7 @@ export const settingsApi = {
   saveSettings: (payload: AppSettings) => api.put<AppSettings>('/settings', payload),
   testMcp: (payload: MCPServiceConfig) => api.post('/settings/mcp/test', payload),
   testNas: (payload: NasConfig) => api.post<{ ok: boolean; item_count?: number; message: string }>('/settings/nas/test', payload),
+  testMedia: (payload: { base_url: string; api_key: string }) => api.post<{ ok: boolean; model_count?: number; models?: string[]; message: string }>('/settings/media/test', payload),
   fetchModels: (baseUrl: string, apiKey: string) =>
     api.post<{ models: string[] }>('/settings/fetch-models', { base_url: baseUrl, api_key: apiKey }),
 };

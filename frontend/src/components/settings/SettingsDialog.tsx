@@ -46,6 +46,8 @@ export function SettingsDialog({ open, settings, onClose, onSave }: SettingsDial
   const [mcpTestResults, setMcpTestResults] = useState<Record<string, { ok: boolean; message: string; tools: string[] }>>({})
   const [testingNas, setTestingNas] = useState(false)
   const [nasTestResult, setNasTestResult] = useState<{ ok: boolean; message: string } | null>(null)
+  const [testingMedia, setTestingMedia] = useState<'image' | 'video' | null>(null)
+  const [mediaTestResult, setMediaTestResult] = useState<Record<'image' | 'video', { ok: boolean; message: string } | null>>({ image: null, video: null })
   const [fetchingModelProfile, setFetchingModelProfile] = useState<string | null>(null)
   const [fetchModelError, setFetchModelError] = useState('')
   const [fetchedModelsMap, setFetchedModelsMap] = useState<Record<string, string[]>>({})
@@ -198,6 +200,27 @@ export function SettingsDialog({ open, settings, onClose, onSave }: SettingsDial
       })
     } finally {
       setTestingNas(false)
+    }
+  }
+
+  const testMedia = async (kind: 'image' | 'video') => {
+    const profile = kind === 'image' ? draft?.image_profile : draft?.video_profile
+    if (!profile) return
+    setTestingMedia(kind)
+    setMediaTestResult((prev) => ({ ...prev, [kind]: null }))
+    try {
+      const res = await settingsApi.testMedia({ base_url: profile.base_url, api_key: profile.api_key })
+      setMediaTestResult((prev) => ({
+        ...prev,
+        [kind]: { ok: !!res.data?.ok, message: res.data?.message || '测试完成' },
+      }))
+    } catch (err: any) {
+      setMediaTestResult((prev) => ({
+        ...prev,
+        [kind]: { ok: false, message: err.response?.data?.detail || err.message || '测试失败' },
+      }))
+    } finally {
+      setTestingMedia(null)
     }
   }
 
@@ -544,6 +567,21 @@ export function SettingsDialog({ open, settings, onClose, onSave }: SettingsDial
                     className="mt-2 w-full rounded-2xl border border-black/10 bg-white px-3 py-2.5 font-mono text-sm outline-none focus:border-surface-500"
                   />
                 </label>
+
+                <button
+                  type="button"
+                  onClick={() => testMedia('image')}
+                  disabled={testingMedia === 'image'}
+                  className="flex items-center gap-2 rounded-2xl border border-surface-300 bg-white px-4 py-2 text-sm font-semibold text-surface-700 transition hover:bg-surface-50 disabled:cursor-not-allowed disabled:opacity-50"
+                >
+                  {testingMedia === 'image' ? '测试中...' : '测试连接'}
+                </button>
+
+                {mediaTestResult.image && (
+                  <div className={`rounded-lg px-3 py-2 text-sm break-all whitespace-pre-wrap leading-relaxed ${mediaTestResult.image.ok ? 'bg-emerald-50 text-emerald-700' : 'bg-red-50 text-red-600'}`}>
+                    {mediaTestResult.image.message}
+                  </div>
+                )}
               </div>
             </div>
           )}
@@ -581,6 +619,21 @@ export function SettingsDialog({ open, settings, onClose, onSave }: SettingsDial
                     className="mt-2 w-full rounded-2xl border border-black/10 bg-white px-3 py-2.5 font-mono text-sm outline-none focus:border-surface-500"
                   />
                 </label>
+
+                <button
+                  type="button"
+                  onClick={() => testMedia('video')}
+                  disabled={testingMedia === 'video'}
+                  className="flex items-center gap-2 rounded-2xl border border-surface-300 bg-white px-4 py-2 text-sm font-semibold text-surface-700 transition hover:bg-surface-50 disabled:cursor-not-allowed disabled:opacity-50"
+                >
+                  {testingMedia === 'video' ? '测试中...' : '测试连接'}
+                </button>
+
+                {mediaTestResult.video && (
+                  <div className={`rounded-lg px-3 py-2 text-sm break-all whitespace-pre-wrap leading-relaxed ${mediaTestResult.video.ok ? 'bg-emerald-50 text-emerald-700' : 'bg-red-50 text-red-600'}`}>
+                    {mediaTestResult.video.message}
+                  </div>
+                )}
               </div>
             </div>
           )}
