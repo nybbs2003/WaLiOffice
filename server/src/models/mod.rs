@@ -172,7 +172,8 @@ pub struct FeishuToken {
 }
 
 /// 每用户的 NAS（懒猫微服 WebDAV）挂载凭据
-/// 多租户场景：每个用户单独保存自己的 NAS 凭据，多用户挂载同一 NAS 互不冲突。
+/// 多租户场景：每个用户单独保存自己的 NAS 凭据 + 各自的挂载根路径（root_path），
+/// 多用户挂载同一 NAS 地址时，通过 root_path 做命名空间隔离，互不冲突。
 /// 凭据按 user_id 隔离存储在 user_settings，工具调用时按 ctx.user_id 读取自己的凭据。
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct NasConfig {
@@ -188,6 +189,11 @@ pub struct NasConfig {
     /// WebDAV 密码
     #[serde(default)]
     pub password: String,
+    /// 挂载根路径（命名空间隔离关键）：该用户/租户在 NAS 上的专属根目录，
+    /// 如 /users/alice 或 /tenant-a。所有 nas_* 操作的相对路径都拼在此根路径之下，
+    /// 从而多个用户共享同一 NAS 地址时互不串扰。空表示挂载整个根。
+    #[serde(default)]
+    pub root_path: String,
     /// 是否已配置
     #[serde(default)]
     pub enabled: bool,

@@ -40,13 +40,38 @@ fn join_url(base: &str, path: &str) -> String {
     }
 }
 
+/// 把「相对挂载根」的路径解析为「相对 WebDAV 根」的完整路径：
+/// 先拼上该用户的 root_path（命名空间隔离），再拼用户传入的相对路径。
+/// 例：root_path="/users/alice"，path="docs" → "/users/alice/docs"
+///
+/// 安全：拒绝 `..` 路径穿越，防止用户逃出自己的 root_path 命名空间。
+fn resolve_path(root_path: &str, path: &str) -> anyhow::Result<String> {
+    let root = root_path.trim().trim_matches('/');
+    let rel = path.trim().trim_matches('/');
+
+    // 路径穿越防护：相对路径里不允许出现 .. 段
+    for seg in rel.split('/') {
+        if seg == ".." {
+            return Err(anyhow::anyhow!("非法路径：不允许使用 '..' 跨越挂载根目录"));
+        }
+    }
+
+    Ok(match (root.is_empty(), rel.is_empty()) {
+        (true, true) => String::new(),
+        (true, false) => rel.to_string(),
+        (false, true) => root.to_string(),
+        (false, false) => format!("{}/{}", root, rel),
+    })
+}
+
 /// PROPFIND 列目录（Depth: 1），返回 (名称, 是否目录, 大小, 最后修改)
 async fn dav_list(
     cfg: &NasConfig,
-    path: &str,
+    rel_path: &str,
 ) -> anyhow::Result<Vec<serde_json::Value>> {
+    let full_path = match resolve_path(&cfg.root_path, rel_path) { Ok(p) => p, Err(e) => return Err(e) };
     let client = dav_client();
-    let url = join_url(&cfg.base_url, path);
+    let url = join_url(&cfg.base_url, &full_path);
     let resp = client
         .request(reqwest::Method::from_bytes(b"PROPFIND").unwrap(), &url)
         .basic_auth(&cfg.username, Some(&cfg.password))
@@ -142,9 +167,10 @@ fn parse_propfind_response(body: &str) -> anyhow::Result<Vec<serde_json::Value>>
 }
 
 /// GET 读取文件内容
-async fn dav_read(cfg: &NasConfig, path: &str) -> anyhow::Result<(String, String)> {
+async fn dav_read(cfg: &NasConfig, rel_path: &str) -> anyhow::Result<(String, String)> {
+    let full_path = match resolve_path(&cfg.root_path, rel_path) { Ok(p) => p, Err(e) => return Err(e) };
     let client = dav_client();
-    let url = join_url(&cfg.base_url, path);
+    let url = join_url(&cfg.base_url, &full_path);
     let resp = client
         .get(&url)
         .basic_auth(&cfg.username, Some(&cfg.password))
@@ -166,9 +192,10 @@ async fn dav_read(cfg: &NasConfig, path: &str) -> anyhow::Result<(String, String
 }
 
 /// PUT 写入文件
-async fn dav_write(cfg: &NasConfig, path: &str, content: &str) -> anyhow::Result<()> {
+async fn dav_write(cfg: &NasConfig, rel_path: &str, content: &str) -> anyhow::Result<()> {
+    let full_path = match resolve_path(&cfg.root_path, rel_path) { Ok(p) => p, Err(e) => return Err(e) };
     let client = dav_client();
-    let url = join_url(&cfg.base_url, path);
+    let url = join_url(&cfg.base_url, &full_path);
     let resp = client
         .put(&url)
         .basic_auth(&cfg.username, Some(&cfg.password))
@@ -184,9 +211,10 @@ async fn dav_write(cfg: &NasConfig, path: &str, content: &str) -> anyhow::Result
 }
 
 /// MKCOL 建目录
-async fn dav_mkdir(cfg: &NasConfig, path: &str) -> anyhow::Result<()> {
+async fn dav_mkdir(cfg: &NasConfig, rel_path: &str) -> anyhow::Result<()> {
+    let full_path = match resolve_path(&cfg.root_path, rel_path) { Ok(p) => p, Err(e) => return Err(e) };
     let client = dav_client();
-    let url = join_url(&cfg.base_url, path);
+    let url = join_url(&cfg.base_url, &full_path);
     let resp = client
         .request(reqwest::Method::from_bytes(b"MKCOL").unwrap(), &url)
         .basic_auth(&cfg.username, Some(&cfg.password))
@@ -436,5 +464,44 @@ impl OfficeTool for NasMkdirTool {
             },
             Err(e) => ToolResult::err(format!("建 NAS 目录失败: {e}")),
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn resolve_path_namespace_isolation() {
+        // 空 root_path + 空 path → 空
+        assert_eq!(resolve_path("", "").unwrap(), "");
+        // 空 root_path + 相对 path → 直接用 path
+        assert_eq!(resolve_path("", "docs").unwrap(), "docs");
+        // 有 root_path + 空 path → root_path
+        assert_eq!(resolve_path("/users/alice", "").unwrap(), "users/alice");
+        // 有 root_path + 相对 path → root_path/path
+        assert_eq!(resolve_path("/users/alice", "docs").unwrap(), "users/alice/docs");
+        // 去多余斜杠
+        assert_eq!(resolve_path("/users/alice/", "/docs/").unwrap(), "users/alice/docs");
+        // 不同用户 root_path 隔离：同一相对路径映射到不同绝对路径
+        assert_eq!(resolve_path("/users/alice", "report.md").unwrap(), "users/alice/report.md");
+        assert_eq!(resolve_path("/users/bob", "report.md").unwrap(), "users/bob/report.md");
+    }
+
+    #[test]
+    fn resolve_path_blocks_traversal() {
+        // 拒绝 .. 路径穿越，防止逃出 root_path 命名空间
+        assert!(resolve_path("/users/alice", "../bob").is_err());
+        assert!(resolve_path("/users/alice", "a/../../b").is_err());
+        assert!(resolve_path("/users/alice", "..").is_err());
+        // 正常路径不受影响
+        assert!(resolve_path("/users/alice", "a/b/c").is_ok());
+    }
+
+    #[test]
+    fn join_url_trims_slashes() {
+        assert_eq!(join_url("https://x.heiyu.space/dav", ""), "https://x.heiyu.space/dav");
+        assert_eq!(join_url("https://x.heiyu.space/dav", "users/alice"), "https://x.heiyu.space/dav/users/alice");
+        assert_eq!(join_url("https://x.heiyu.space/dav/", "/a/b"), "https://x.heiyu.space/dav/a/b");
     }
 }

@@ -73,6 +73,7 @@ export interface NasConfig {
   base_url: string;
   username: string;
   password: string;
+  root_path: string;
   enabled: boolean;
 }
 

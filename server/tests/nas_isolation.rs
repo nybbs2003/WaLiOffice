@@ -69,6 +69,7 @@ async fn nas_credentials_isolated_per_user() {
         base_url: "https://roboterra.heiyu.space/dav".into(),
         username: "alice".into(),
         password: "alice-pass".into(),
+        root_path: "/users/alice".into(),
         enabled: true,
     };
     settings_repo::save_for_user(&pool, &user_a, &settings_a).await.expect("save A");
@@ -79,6 +80,7 @@ async fn nas_credentials_isolated_per_user() {
         base_url: "https://roboterra.heiyu.space/dav".into(),
         username: "bob".into(),
         password: "bob-pass".into(),
+        root_path: "/users/bob".into(),
         enabled: true,
     };
     settings_repo::save_for_user(&pool, &user_b, &settings_b).await.expect("save B");
@@ -90,14 +92,17 @@ async fn nas_credentials_isolated_per_user() {
     assert_eq!(read_a.nas_config.username, "alice");
     assert_eq!(read_a.nas_config.password, "alice-pass");
     assert_eq!(read_a.nas_config.name, "A的资料库");
+    assert_eq!(read_a.nas_config.root_path, "/users/alice");
 
     assert_eq!(read_b.nas_config.username, "bob");
     assert_eq!(read_b.nas_config.password, "bob-pass");
     assert_eq!(read_b.nas_config.name, "B的资料库");
+    assert_eq!(read_b.nas_config.root_path, "/users/bob");
 
-    // 同一个 NAS 地址（互不冲突），但账号不同
+    // 同一个 NAS 地址（机器全局映射），但凭据 + root_path 不同 → 命名空间隔离
     assert_eq!(read_a.nas_config.base_url, read_b.nas_config.base_url);
     assert_ne!(read_a.nas_config.username, read_b.nas_config.username);
+    assert_ne!(read_a.nas_config.root_path, read_b.nas_config.root_path);
 }
 
 #[tokio::test]
