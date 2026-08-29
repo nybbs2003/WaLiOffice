@@ -1,4 +1,4 @@
-import { Clapperboard, Code2, Download, Eye, GripVertical, Image, Layers3, Maximize2, Minimize2, MessageSquarePlus, PenTool, Pencil, Save, Sparkles } from 'lucide-react'
+import { ChevronDown, Clapperboard, Code2, Download, Eye, GripVertical, Image, Layers3, Maximize2, Minimize2, MessageSquarePlus, PenTool, Pencil, Save, Sparkles } from 'lucide-react'
 import { useEffect, useMemo, useRef, useState } from 'react'
 import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
@@ -861,6 +861,8 @@ export function ArtifactPanel({
 }: ArtifactPanelProps) {
   const [panelWidth, setPanelWidth] = useState(isWide ? 760 : 560)
   const draggingRef = useRef(false)
+  // 产物导航区是否展开（默认收起，预览区优先）
+  const [showArtifactNav, setShowArtifactNav] = useState(false)
   const artifactTurnGroups = useMemo(() => groupArtifactsByTurn(artifacts, messages), [artifacts, messages])
   const activeArtifactTurn = findArtifactTurnGroup(activeArtifact?.id || null, artifactTurnGroups)
 
@@ -1059,31 +1061,52 @@ export function ArtifactPanel({
       </div>
 
       {artifacts.length > 0 && (
-        <div className="shrink-0 border-b border-surface-100 bg-white/80 px-3 py-2">
-          <div className="space-y-2 overflow-y-auto">
-            {artifactTurnGroups.map((group) => (
-              <div key={group.key} className="rounded-2xl border border-surface-100 bg-surface-50/70 px-2.5 py-2">
-                <div className="mb-2 flex items-center justify-between gap-2 px-1">
-                  <div className="rounded-full bg-white px-2.5 py-1 text-[11px] font-semibold text-surface-700 ring-1 ring-black/[0.05]">
-                    {group.title}
+        <div className="shrink-0 border-b border-surface-100 bg-white/80">
+          {/* 收起态：紧凑一条（当前产物 + 数量 + 展开按钮），预览区优先 */}
+          <button
+            type="button"
+            onClick={() => setShowArtifactNav(!showArtifactNav)}
+            className="flex w-full items-center gap-2 px-3 py-2 text-left hover:bg-surface-50"
+            title={showArtifactNav ? '收起产物导航' : '展开产物导航'}
+          >
+            <ChevronDown className={`h-3.5 w-3.5 shrink-0 text-surface-400 transition-transform ${showArtifactNav ? '' : '-rotate-90'}`} />
+            <span className="min-w-0 flex-1 truncate text-[11px] font-medium text-surface-600">
+              {activeArtifactTurn ? `${activeArtifactTurn.title} · ` : ''}{activeArtifact?.title || '已生成产物'}
+            </span>
+            <span className="shrink-0 rounded-full bg-surface-100 px-2 py-0.5 text-[10px] text-surface-400">
+              {artifacts.length} 个产物
+            </span>
+          </button>
+
+          {/* 展开态：限高滚动，绝不撑高面板、不顶预览区 */}
+          {showArtifactNav && (
+            <div className="max-h-48 overflow-y-auto border-t border-surface-100 px-3 py-2">
+              <div className="space-y-2">
+                {artifactTurnGroups.map((group) => (
+                  <div key={group.key} className="rounded-2xl border border-surface-100 bg-surface-50/70 px-2.5 py-2">
+                    <div className="mb-2 flex items-center justify-between gap-2 px-1">
+                      <div className="rounded-full bg-white px-2.5 py-1 text-[11px] font-semibold text-surface-700 ring-1 ring-black/[0.05]">
+                        {group.title}
+                      </div>
+                      <div className="text-[11px] text-surface-400">{group.timeLabel}</div>
+                    </div>
+                    <div className="flex gap-2 overflow-x-auto">
+                      {group.artifacts.map((artifact) => (
+                        <button
+                          key={artifact.id}
+                          onClick={() => onSelectArtifact(artifact.id)}
+                          className={`shrink-0 rounded-full px-3 py-1 text-xs ${activeArtifact?.id === artifact.id ? 'bg-primary-600 text-white' : 'bg-white text-surface-500 hover:bg-surface-200'}`}
+                          title={artifact.title}
+                        >
+                          {(artifactKindLabel[artifact.kind] || artifact.kind)} · {artifact.title.slice(0, 16)}
+                        </button>
+                      ))}
+                    </div>
                   </div>
-                  <div className="text-[11px] text-surface-400">{group.timeLabel}</div>
-                </div>
-                <div className="flex gap-2 overflow-x-auto">
-                  {group.artifacts.map((artifact) => (
-                    <button
-                      key={artifact.id}
-                      onClick={() => onSelectArtifact(artifact.id)}
-                      className={`shrink-0 rounded-full px-3 py-1 text-xs ${activeArtifact?.id === artifact.id ? 'bg-primary-600 text-white' : 'bg-white text-surface-500 hover:bg-surface-200'}`}
-                      title={artifact.title}
-                    >
-                      {(artifactKindLabel[artifact.kind] || artifact.kind)} · {artifact.title.slice(0, 16)}
-                    </button>
-                  ))}
-                </div>
+                ))}
               </div>
-            ))}
-          </div>
+            </div>
+          )}
         </div>
       )}
 
