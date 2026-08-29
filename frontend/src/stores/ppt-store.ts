@@ -438,6 +438,28 @@ export const usePPTStore = create<PPTState>()(
         tabs: state.tabs,
         sessionId: state.sessionId,
       }),
+      // 水合完成后，把 activeTab 的数据同步到顶层字段（artifacts/messages/sessionId 等），
+      // 否则刷新后顶层 artifacts 为空，右侧面板不渲染、图片/markdown 预览不到内容。
+      onRehydrateStorage: () => (state, error) => {
+        if (error) return
+        if (!state) return
+        const tabId = state.activeTabId
+        const tab = tabId ? state.tabs?.[tabId] : undefined
+        if (!tab) return
+        const synced = {
+          project: tab.project,
+          slides: tab.slides,
+          currentSlideIndex: tab.currentSlideIndex,
+          messages: tab.messages,
+          isGenerating: tab.isGenerating,
+          isStreaming: tab.isStreaming,
+          sessionId: tab.sessionId,
+          artifacts: tab.artifacts,
+          activeArtifactId: tab.activeArtifactId,
+        }
+        // 用 usePPTStore.setState 合并回 store（rehydrate 阶段 set 是安全的）
+        usePPTStore.setState(synced)
+      },
     }
   )
 );

@@ -609,9 +609,11 @@ export default function Studio() {
       setActiveTool(tool)
       const restoredMessages = buildRestoredMessages(session)
       const restoredArtifacts = session.artifacts || []
+      // 从 store 拿最新 activeTabId（闭包里的可能因水合未完成而是 null，导致刷新后 artifacts 丢失）
+      const currentTabId = usePPTStore.getState().activeTabId
       // 定向写入当前活跃 tab（而非只写顶层），避免 syncFromTab 用旧 tab 数据覆盖
-      if (activeTabId) {
-        updateTab(activeTabId, {
+      if (currentTabId) {
+        updateTab(currentTabId, {
           messages: restoredMessages,
           artifacts: restoredArtifacts,
           activeArtifactId: restoredArtifacts[0]?.id || null,
@@ -652,8 +654,8 @@ export default function Studio() {
       setStreamStatus('已恢复历史会话')
       setProcessLogs(buildHistoryProcessLogs(session))
       // 更新当前 tab 元信息
-      if (activeTabId) {
-        updateTab(activeTabId, {
+      if (currentTabId) {
+        updateTab(currentTabId, {
           tabTitle: session.title?.slice(0, 24) || '历史会话',
           sessionId: session.id,
           activeTool: tool,
