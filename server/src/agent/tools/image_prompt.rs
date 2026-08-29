@@ -122,6 +122,32 @@ fn infer_image_output_spec(topic: &str) -> ImageOutputSpec {
     }
 }
 
+/// 判断当前模型是否支持「组图生成」（sequential_image_generation 一次出多张）。
+/// 火山方舟官方模型列表：
+/// - pro 系列（doubao-seedream-5-0-pro-260628）：仅单图生成，传 sequential 参数会 400
+/// - 非 pro（5-0 / 5-0-lite / 4-5 / 4-0）：支持组图生成（文生组图/单张图生组图/多参考图生组图）
+/// Agnes（非火山）不支持组图。
+fn supports_sequential_generation(is_volc: bool, model: &str) -> bool {
+    if !is_volc {
+        return false;
+    }
+    !model.to_lowercase().contains("pro")
+}
+
+/// 把多套风格提示词整合成一条组图提示词（供 sequential_image_generation 使用）。
+fn build_sequential_prompt(topic: &str, variants: &[ImageVariant]) -> String {
+    let parts: Vec<String> = variants
+        .iter()
+        .enumerate()
+        .map(|(i, v)| format!("Image {}: {}", i + 1, v.prompt))
+        .collect();
+    format!(
+        "Generate a set of {} distinct images for this request: {topic}. Generate each image exactly as specified below, keeping a consistent overall subject while varying the described style and composition.\n{}",
+        variants.len(),
+        parts.join("\n")
+    )
+}
+
 fn image_src_from_response(image: &AgnesImageData) -> Option<String> {
     image
         .url
@@ -380,8 +406,8 @@ impl OfficeTool for ImagePromptTool {
             Err(err) => return ToolResult::err(format!("初始化图像客户端失败: {err}")),
         };
 
-        // 按厂商构建图片生成请求体
-        let build_image_body = |prompt: &str, img2img: bool, spec: ImageOutputSpec| -> serde_json::Value {
+        // 按厂商构建图片生成请求体。seq_max：Some(n) 表示启用组图模式（一次出 n 张）
+        let build_image_body = |prompt: &str, img2img: bool, spec: ImageOutputSpec, seq_max: Option<usize>| -> serde_json::Value {
             if is_volc {
                 // 火山方舟 Seedream：size 用「方式2」像素值精确控制宽高比（方式1档位需 prompt 描述比例，不可混用）
                 // Seedream 5.0 pro 总像素 [921600, 4624220]，宽高比 [1/16, 16]
@@ -392,6 +418,11 @@ impl OfficeTool for ImagePromptTool {
                     "response_format": "url",
                     "watermark": true,
                 });
+                if let Some(max_images) = seq_max {
+                    // 组图模式：仅非 pro 模型支持（pro 传这两个参数会 400）
+                    body["sequential_image_generation"] = json!("auto");
+                    body["sequential_image_generation_options"] = json!({ "max_images": max_images });
+                }
                 if img2img && !image_inputs.is_empty() {
                     // 火山方舟图生图：image 参数（string 或 string[]）
                     let image_val = if image_inputs.len() == 1 {
@@ -437,60 +468,116 @@ impl OfficeTool for ImagePromptTool {
         let mut generated_variants = Vec::new();
         let mut failed_variants = Vec::new();
 
-        for (index, variant) in variants.iter().enumerate() {
+        let sequential_ok = supports_sequential_generation(is_volc, &image_model);
+
+        if sequential_ok && variants.len() > 1 {
+            // ── 组图模式：一次请求出多张，减少等待 ──
+            let merged_prompt = build_sequential_prompt(topic, &variants);
             ctx.send(
                 "state_update",
                 json!({
                     "phase": "running",
                     "step": "Agnes 图像生成",
-                    "detail": format!("正在生成第 {} / {} 张图片（{}）...", index + 1, variants.len(), variant.style),
+                    "detail": format!("组图模式：一次生成 {} 张（{}）...", variants.len(), variants.iter().map(|v| v.style.as_str()).collect::<Vec<_>>().join("/")),
                     "at": chrono::Utc::now().to_rfc3339(),
                 }),
             );
-
-            let request_body = build_image_body(&variant.prompt, wants_image_to_image, output_spec);
-
-            let response =
-                match generate_agnes_image(&client, &endpoint, &credentials, &request_body)
-                    .await
-                {
-                    Ok(response) => response,
-                    Err(err) => {
-                        let detail = format!(
-                            "第 {} 张图片生成失败（{}）：{}",
-                            index + 1,
-                            variant.style,
-                            err
-                        );
-                        failed_variants.push(detail.clone());
-                        ctx.send(
-                            "state_update",
-                            json!({
-                                "phase": "running",
-                                "step": "Agnes 图像生成",
-                                "detail": detail,
-                                "at": chrono::Utc::now().to_rfc3339(),
-                            }),
-                        );
-                        continue;
+            let request_body = build_image_body(&merged_prompt, wants_image_to_image, output_spec, Some(variants.len()));
+            match generate_agnes_image(&client, &endpoint, &credentials, &request_body).await {
+                Ok(response) => {
+                    for (index, image) in response.data.into_iter().enumerate() {
+                        if let Some(src) = image_src_from_response(&image) {
+                            let variant = variants.get(index);
+                            generated_images.push(src.clone());
+                            generated_variants.push(json!({
+                                "style": variant.map(|v| v.style.clone()).unwrap_or_else(|| format!("组图 {}", index + 1)),
+                                "prompt": variant.map(|v| v.prompt.clone()).unwrap_or_default(),
+                                "url": src,
+                                "revised_prompt": image.revised_prompt,
+                            }));
+                        } else {
+                            failed_variants.push(format!("组图第 {} 张没有返回 url 或 b64_json", index + 1));
+                        }
                     }
-                };
-
-            let image = response.data.into_iter().next();
-            let image_src = image.as_ref().and_then(image_src_from_response);
-            if let Some(src) = image_src {
-                generated_images.push(src.clone());
-                generated_variants.push(json!({
-                    "style": variant.style,
-                    "prompt": variant.prompt,
-                    "url": src,
-                    "revised_prompt": image.and_then(|item| item.revised_prompt),
-                }));
-            } else {
-                failed_variants.push(format!(
-                    "第 {} 张图片响应成功，但没有返回 url 或 b64_json",
-                    index + 1
-                ));
+                }
+                Err(err) => {
+                    failed_variants.push(format!("组图生成失败：{err}"));
+                }
+            }
+        } else if variants.len() > 1 {
+            // ── 不支持组图（pro/Agnes）：并行发多个单图请求，减少串行等待 ──
+            ctx.send(
+                "state_update",
+                json!({
+                    "phase": "running",
+                    "step": "Agnes 图像生成",
+                    "detail": format!("并行生成 {} 张图片...", variants.len()),
+                    "at": chrono::Utc::now().to_rfc3339(),
+                }),
+            );
+            let futures = variants.iter().enumerate().map(|(index, variant)| {
+                let body = build_image_body(&variant.prompt, wants_image_to_image, output_spec, None);
+                let client = client.clone();
+                let endpoint = endpoint.clone();
+                let credentials = credentials.clone();
+                let style = variant.style.clone();
+                async move {
+                    let result = generate_agnes_image(&client, &endpoint, &credentials, &body).await;
+                    (index, style, result)
+                }
+            });
+            let results = futures::future::join_all(futures).await;
+            for (index, style, result) in results {
+                match result {
+                    Ok(response) => {
+                        let image = response.data.into_iter().next();
+                        let src = image.as_ref().and_then(image_src_from_response);
+                        if let Some(src) = src {
+                            generated_images.push(src.clone());
+                            generated_variants.push(json!({
+                                "style": style,
+                                "prompt": variants.get(index).map(|v| v.prompt.clone()).unwrap_or_default(),
+                                "url": src,
+                                "revised_prompt": image.and_then(|item| item.revised_prompt),
+                            }));
+                        } else {
+                            failed_variants.push(format!("第 {} 张图片响应成功，但没有返回 url 或 b64_json", index + 1));
+                        }
+                    }
+                    Err(err) => {
+                        failed_variants.push(format!("第 {} 张图片生成失败（{}）：{}", index + 1, style, err));
+                    }
+                }
+            }
+        } else {
+            // ── 单张：直接生成 ──
+            let variant = &variants[0];
+            ctx.send(
+                "state_update",
+                json!({
+                    "phase": "running",
+                    "step": "Agnes 图像生成",
+                    "detail": format!("正在生成图片（{}）...", variant.style),
+                    "at": chrono::Utc::now().to_rfc3339(),
+                }),
+            );
+            let request_body = build_image_body(&variant.prompt, wants_image_to_image, output_spec, None);
+            match generate_agnes_image(&client, &endpoint, &credentials, &request_body).await {
+                Ok(response) => {
+                    let image = response.data.into_iter().next();
+                    if let Some(src) = image.as_ref().and_then(image_src_from_response) {
+                        generated_images.push(src.clone());
+                        generated_variants.push(json!({
+                            "style": variant.style,
+                            "prompt": variant.prompt,
+                            "url": src,
+                            "revised_prompt": image.and_then(|item| item.revised_prompt),
+                        }));
+                    } else {
+                        failed_variants.push("图片响应成功，但没有返回 url 或 b64_json".to_string());
+                    }
+                }
+                Err(err) => failed_variants.push(format!("图片生成失败：{err}")),
             }
         }
 
@@ -508,7 +595,7 @@ impl OfficeTool for ImagePromptTool {
                 "Create a clear, high quality image for this user request: {topic}. Use a simple strong composition, recognizable main subject, polished lighting, and appealing visual details."
             );
             let fallback_spec = image_spec_for_ratio("1:1");
-            let fallback_body = build_image_body(&fallback_prompt, wants_image_to_image, fallback_spec);
+            let fallback_body = build_image_body(&fallback_prompt, wants_image_to_image, fallback_spec, None);
             match generate_agnes_image(&client, &endpoint, &credentials, &fallback_body)
                 .await
             {
