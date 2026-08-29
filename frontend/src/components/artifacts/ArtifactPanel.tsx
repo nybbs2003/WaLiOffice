@@ -481,6 +481,7 @@ function ImageArtifact({ artifact, onInsert }: { artifact: Artifact, onInsert: (
   const images: string[] = artifact.content?.images || []
   const variants: Array<{ style?: string; prompt?: string; url?: string }> = artifact.content?.variants || artifact.content?.data?.prompts || []
   const [previewImage, setPreviewImage] = useState<string | null>(null)
+  const [failedSrcs, setFailedSrcs] = useState<Set<string>>(new Set())
 
   useEffect(() => {
     if (!previewImage) return
@@ -490,6 +491,10 @@ function ImageArtifact({ artifact, onInsert }: { artifact: Artifact, onInsert: (
     window.addEventListener('keydown', handleKeyDown)
     return () => window.removeEventListener('keydown', handleKeyDown)
   }, [previewImage])
+
+  const markFailed = (src: string) => {
+    setFailedSrcs((prev) => new Set(prev).add(src))
+  }
 
   return (
     <div className="w-full max-w-3xl space-y-4">
@@ -503,7 +508,20 @@ function ImageArtifact({ artifact, onInsert }: { artifact: Artifact, onInsert: (
                 className="block w-full cursor-zoom-in rounded-3xl text-left focus:outline-none focus:ring-2 focus:ring-primary-500 focus:ring-offset-2"
                 aria-label={`放大查看图片 ${index + 1}`}
               >
-                <img src={src} className="aspect-video w-full rounded-3xl border border-surface-200 object-cover" />
+                {failedSrcs.has(src) ? (
+                  <div className="flex aspect-video w-full flex-col items-center justify-center rounded-3xl border border-surface-200 bg-surface-50 text-surface-400">
+                    <Image className="h-8 w-8" />
+                    <span className="mt-2 text-xs">预览失败，请到「我的文件」查看</span>
+                  </div>
+                ) : (
+                  <img
+                    src={src}
+                    referrerPolicy="no-referrer"
+                    loading="lazy"
+                    onError={() => markFailed(src)}
+                    className="aspect-video w-full rounded-3xl border border-surface-200 bg-surface-50 object-contain"
+                  />
+                )}
               </button>
               <div className="flex items-center gap-2">
                 <button
@@ -546,6 +564,7 @@ function ImageArtifact({ artifact, onInsert }: { artifact: Artifact, onInsert: (
           </button>
           <img
             src={previewImage}
+            referrerPolicy="no-referrer"
             className="max-h-[90vh] max-w-[92vw] rounded-2xl object-contain shadow-2xl"
             onClick={(event) => event.stopPropagation()}
           />

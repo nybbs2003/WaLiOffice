@@ -790,25 +790,32 @@ async fn save_generated_artifact_to_files(pool: &DbPool, owner_id: &str, artifac
             }
         }
         "image" => {
-            if let Some(url) = artifact
+            // 保存全部生成图片（不再只取第一张），文件名带序号避免重复
+            if let Some(images) = artifact
                 .content
                 .get("images")
                 .and_then(|value| value.as_array())
-                .and_then(|items| items.first())
-                .and_then(|value| value.as_str())
             {
-                save_media_url_to_files(
-                    pool,
-                    owner_id,
-                    artifact,
-                    url,
-                    "image/",
-                    "image",
-                    ".png",
-                    &description,
-                    metadata,
-                )
-                .await;
+                let multi = images.len() > 1;
+                for (idx, url) in images.iter().enumerate() {
+                    let Some(url) = url.as_str() else { continue };
+                    let mut numbered = artifact.clone();
+                    if multi {
+                        numbered.title = format!("{}-{}", artifact.title, idx + 1);
+                    }
+                    save_media_url_to_files(
+                        pool,
+                        owner_id,
+                        &numbered,
+                        url,
+                        "image/",
+                        "image",
+                        ".png",
+                        &description,
+                        metadata.clone(),
+                    )
+                    .await;
+                }
             }
         }
         "video" => {

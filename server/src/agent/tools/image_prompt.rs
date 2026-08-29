@@ -39,8 +39,26 @@ struct AgnesImageData {
 
 #[derive(Debug, Clone, Copy)]
 struct ImageOutputSpec {
+    /// 分辨率档位（1K/1.5K/2K），火山方舟方式1
     size: &'static str,
+    /// 宽高比（用于 Agnes ratio 参数 + 提示词约束）
     ratio: &'static str,
+    /// 像素尺寸（火山方舟方式2，宽x高）
+    pixel_size: &'static str,
+}
+
+/// 把配置面板的宽高比映射到具体像素尺寸 + 档位。
+fn image_spec_for_ratio(aspect_ratio: &str) -> ImageOutputSpec {
+    match aspect_ratio.trim() {
+        "1:1" => ImageOutputSpec { size: "1.5K", ratio: "1:1", pixel_size: "1536x1536" },
+        "16:9" => ImageOutputSpec { size: "1.5K", ratio: "16:9", pixel_size: "2304x1296" },
+        "9:16" => ImageOutputSpec { size: "1.5K", ratio: "9:16", pixel_size: "1296x2304" },
+        "4:3" => ImageOutputSpec { size: "1.5K", ratio: "4:3", pixel_size: "1920x1440" },
+        "3:4" => ImageOutputSpec { size: "1.5K", ratio: "3:4", pixel_size: "1440x1920" },
+        "2:3" => ImageOutputSpec { size: "1.5K", ratio: "2:3", pixel_size: "1408x2112" },
+        "3:2" => ImageOutputSpec { size: "1.5K", ratio: "3:2", pixel_size: "1920x1280" },
+        _ => ImageOutputSpec { size: "1.5K", ratio: "1:1", pixel_size: "1536x1536" },
+    }
 }
 
 fn collect_image_inputs(ctx: &ToolContext, input: &serde_json::Value) -> Vec<String> {
@@ -93,23 +111,14 @@ fn infer_image_output_spec(topic: &str) -> ImageOutputSpec {
         .iter()
         .any(|keyword| lower.contains(keyword))
     {
-        ImageOutputSpec {
-            size: "1K",
-            ratio: "2:3",
-        }
+        image_spec_for_ratio("2:3")
     } else if ["头像", "logo", "方图", "icon", "图标", "社媒配图"]
         .iter()
         .any(|keyword| lower.contains(keyword))
     {
-        ImageOutputSpec {
-            size: "1K",
-            ratio: "1:1",
-        }
+        image_spec_for_ratio("1:1")
     } else {
-        ImageOutputSpec {
-            size: "1K",
-            ratio: "3:2",
-        }
+        image_spec_for_ratio("3:2")
     }
 }
 
@@ -238,7 +247,24 @@ impl OfficeTool for ImagePromptTool {
         }
 
         let scene_guide = infer_scene_guide(topic);
-        let output_spec = infer_image_output_spec(topic);
+        // 读取配置面板：宽高比 + 风格（aspect_ratio / style）
+        let config_aspect_ratio = ctx.get_config::<String>("aspect_ratio");
+        let config_style = ctx.get_config::<String>("style");
+        let output_spec = match config_aspect_ratio.as_deref().map(str::trim).filter(|s| !s.is_empty()) {
+            Some(ratio) => image_spec_for_ratio(ratio),
+            None => infer_image_output_spec(topic),
+        };
+        // 配置面板指定风格时，覆盖 styles（用于提示词规划）
+        let styles = if styles.is_empty() {
+            config_style
+                .as_deref()
+                .map(str::trim)
+                .filter(|s| !s.is_empty())
+                .map(|s| vec![s.to_string()])
+                .unwrap_or_default()
+        } else {
+            styles
+        };
         let image_inputs = collect_image_inputs(ctx, &input);
         let wants_image_to_image = input
             .get("mode")
@@ -357,11 +383,12 @@ impl OfficeTool for ImagePromptTool {
         // 按厂商构建图片生成请求体
         let build_image_body = |prompt: &str, img2img: bool, spec: ImageOutputSpec| -> serde_json::Value {
             if is_volc {
-                // 火山方舟 Seedream：size（2K/1K）+ response_format + watermark 顶层参数
+                // 火山方舟 Seedream：size 用「方式2」像素值精确控制宽高比（方式1档位需 prompt 描述比例，不可混用）
+                // Seedream 5.0 pro 总像素 [921600, 4624220]，宽高比 [1/16, 16]
                 let mut body = json!({
                     "model": image_model.as_str(),
                     "prompt": prompt,
-                    "size": spec.size,
+                    "size": spec.pixel_size,
                     "response_format": "url",
                     "watermark": true,
                 });
@@ -480,7 +507,7 @@ impl OfficeTool for ImagePromptTool {
             let fallback_prompt = format!(
                 "Create a clear, high quality image for this user request: {topic}. Use a simple strong composition, recognizable main subject, polished lighting, and appealing visual details."
             );
-            let fallback_spec = ImageOutputSpec { size: "1K", ratio: "1:1" };
+            let fallback_spec = image_spec_for_ratio("1:1");
             let fallback_body = build_image_body(&fallback_prompt, wants_image_to_image, fallback_spec);
             match generate_agnes_image(&client, &endpoint, &credentials, &fallback_body)
                 .await
