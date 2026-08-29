@@ -607,6 +607,42 @@ export function SettingsDialog({ open, settings, onClose, onSave }: SettingsDial
                   />
                 </label>
 
+                {/* 推荐模型快捷选择（火山方舟 Seedream，标注组图能力） */}
+                <div className="rounded-2xl border border-surface-200 bg-surface-50/60 p-3">
+                  <div className="mb-2 flex items-center gap-1.5 text-xs font-semibold text-surface-500">
+                    <span>推荐模型（火山方舟）</span>
+                    <span className="rounded-full bg-amber-100 px-1.5 py-0.5 text-[10px] text-amber-700">支持组图</span>
+                  </div>
+                  <div className="flex flex-wrap gap-1.5">
+                    {[
+                      { model: 'doubao-seedream-5-0-260128', label: '5.0 标准', seq: true },
+                      { model: 'doubao-seedream-5-0-lite-260128', label: '5.0 Lite', seq: true },
+                      { model: 'doubao-seedream-4-5-251128', label: '4.5', seq: true },
+                      { model: 'doubao-seedream-5-0-pro-260628', label: '5.0 Pro', seq: false },
+                    ].map((item) => {
+                      const active = (draft.image_profile?.model || '') === item.model
+                      return (
+                        <button
+                          key={item.model}
+                          type="button"
+                          onClick={() => updateDraft({ image_profile: { ...(draft.image_profile || { base_url: '', api_keys: [], api_key: '' }), model: item.model } })}
+                          className={`inline-flex items-center gap-1 rounded-lg px-2.5 py-1.5 text-[11px] font-medium transition ${
+                            active
+                              ? 'bg-indigo-500 text-white'
+                              : 'bg-white text-surface-600 border border-surface-200 hover:bg-indigo-50'
+                          }`}
+                        >
+                          <span>{item.label}</span>
+                          {item.seq && <span className={`rounded px-1 text-[9px] leading-4 ${active ? 'bg-white/20 text-white' : 'bg-emerald-100 text-emerald-700'}`}>组图</span>}
+                        </button>
+                      )
+                    })}
+                  </div>
+                  <p className="mt-2 text-[11px] leading-relaxed text-surface-400">
+                    标注「组图」的模型支持一次生成多张图（更快）；Pro 仅支持单图，将自动并行生成。选 Pro 需将 Base URL 设为火山方舟地址（如 https://ark.cn-beijing.volces.com/api/v3）。
+                  </p>
+                </div>
+
                 <button
                   type="button"
                   onClick={() => testMedia('image')}
