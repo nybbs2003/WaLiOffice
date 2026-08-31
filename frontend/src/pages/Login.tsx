@@ -1,5 +1,4 @@
 import { useEffect, useState } from 'react'
-import { useNavigate } from 'react-router-dom'
 import { useAuthStore } from '@/stores/auth-store'
 import { authApi } from '@/api'
 import { Loader2 } from 'lucide-react'
@@ -7,7 +6,6 @@ import { Loader2 } from 'lucide-react'
 const LOGO_URL = '/logo.png'
 
 export default function Login() {
-  const navigate = useNavigate()
   const login = useAuthStore((s) => s.login)
 
   const [loading, setLoading] = useState(false)
@@ -60,7 +58,8 @@ export default function Login() {
   const afterLoginNavigate = () => {
     const next = sessionStorage.getItem('wa_login_next')
     sessionStorage.removeItem('wa_login_next')
-    navigate(next && next.startsWith('/') ? next : '/')
+    // 整页跳转：让 nginx 按路径路由（/ → 门户首页 Dashboard，/office → 办公助手）
+    window.location.href = next && next.startsWith('/') ? next : '/'
   }
 
   const handleFeishuCallback = async (code: string) => {
