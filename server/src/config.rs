@@ -53,10 +53,6 @@ pub struct Config {
     pub feishu_app_secret: String,
     pub feishu_redirect_uri: String,
 
-    // LiteLLM 网关（API Key 管理）
-    pub litellm_url: String,
-    pub litellm_master_key: String,
-
     // 开放注册开关（单实例多用户场景可关自动注册，走邀请制）
     pub allow_register: bool,
 }
@@ -202,9 +198,6 @@ impl Config {
             feishu_app_id: env::var("FEISHU_APP_ID").unwrap_or_default(),
             feishu_app_secret: env::var("FEISHU_APP_SECRET").unwrap_or_default(),
             feishu_redirect_uri: env_or("FEISHU_REDIRECT_URI", ""),
-
-            litellm_url: env_or("LITELLM_URL", "http://127.0.0.1:4000"),
-            litellm_master_key: env::var("LITELLM_MASTER_KEY").unwrap_or_default(),
 
             allow_register: env_or("ALLOW_REGISTER", "true").parse().unwrap_or(true),
         })

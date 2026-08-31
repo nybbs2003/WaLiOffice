@@ -23,6 +23,7 @@ pub fn router() -> Router {
         .route("/api/auth/feishu/login", post(feishu_login))
         .route("/api/auth/feishu/config", get(feishu_config))
         .route("/api/auth/me", get(me))
+        .route("/api/auth/session-token", get(session_token))
         .route("/api/auth/session-check", any(session_check))
 }
 
@@ -61,29 +62,48 @@ fn auth_response(token: String, user: crate::models::User) -> axum::response::Re
 
 /// nginx auth_request 子请求：校验 Cookie（wa_session）或 Authorization Bearer，
 /// 200 = 已登录，401 = 未登录（nginx 据此 302 到飞书登录页）。
-async fn session_check(headers: HeaderMap) -> axum::response::Response {
-    let mut ok = false;
-    if let Some(auth) = headers
-        .get(AUTHORIZATION)
-        .and_then(|v| v.to_str().ok())
-    {
-        if let Some(token) = auth.strip_prefix("Bearer ") {
-            ok = crate::auth::verify_token(token.trim()).is_ok();
-        }
-    }
-    if !ok {
-        if let Some(cookie) = headers.get(COOKIE).and_then(|v| v.to_str().ok()) {
-            for part in cookie.split(';') {
-                let part = part.trim();
-                if let Some(token) = part.strip_prefix("wa_session=") {
-                    if crate::auth::verify_token(token).is_ok() {
-                        ok = true;
-                    }
-                    break;
+/// 抽公共函数：从请求头解析合法 JWT（Cookie 优先）。
+fn token_from_headers(headers: &HeaderMap) -> Option<String> {
+    if let Some(cookie) = headers.get(COOKIE).and_then(|v| v.to_str().ok()) {
+        for part in cookie.split(';') {
+            let part = part.trim();
+            if let Some(token) = part.strip_prefix("wa_session=") {
+                if crate::auth::verify_token(token).is_ok() {
+                    return Some(token.to_string());
                 }
+                break;
             }
         }
     }
+    if let Some(auth) = headers.get(AUTHORIZATION).and_then(|v| v.to_str().ok()) {
+        if let Some(token) = auth.strip_prefix("Bearer ") {
+            let token = token.trim();
+            if crate::auth::verify_token(token).is_ok() {
+                return Some(token.to_string());
+            }
+        }
+    }
+    None
+}
+
+/// 门户单点登录：浏览器已带 wa_session Cookie 时，返回 JWT + 用户信息，
+/// 供门户 Dashboard / Office SPA 自动登录（免二次飞书授权）。
+async fn session_token(headers: HeaderMap) -> Result<Json<TokenResponse>, AppError> {
+    let token = token_from_headers(&headers).ok_or(AppError::Unauthorized)?;
+    let claims = crate::auth::verify_token(&token).map_err(|_| AppError::Unauthorized)?;
+    let pool = state::db_pool();
+    let user = user_repo::find_by_id(&pool, &claims.sub)
+        .await?
+        .ok_or(AppError::Unauthorized)?;
+    Ok(Json(TokenResponse {
+        access_token: token,
+        token_type: "bearer".into(),
+        user,
+    }))
+}
+
+async fn session_check(headers: HeaderMap) -> axum::response::Response {
+    let ok = token_from_headers(&headers).is_some();
     if ok {
         axum::response::Response::builder()
             .status(200)

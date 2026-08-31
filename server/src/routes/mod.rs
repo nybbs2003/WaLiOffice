@@ -5,7 +5,6 @@ pub mod doc_export;
 pub mod embed;
 pub mod file;
 pub mod health;
-pub mod llm_proxy;
 pub mod notification;
 pub mod project;
 pub mod session;
@@ -36,7 +35,6 @@ pub fn build_router() -> Router {
         .merge(settings::router())
         .merge(tenant::router())
         .merge(file::router())
-        .merge(llm_proxy::router())
         .merge(dashboard::router())
         .merge(doc_export::router())
         .merge(health::router())

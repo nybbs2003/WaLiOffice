@@ -55,8 +55,14 @@ export default function Login() {
     if (next) sessionStorage.setItem('wa_login_next', next)
     if (code) {
       handleFeishuCallback(code)
-    } else if (next && feishuEnabled && !feishuAppId) {
-      // feishuConfig 尚未返回时，延迟到它返回后再自动拉起（见下方 effect）
+    } else {
+      // 门户 SSO：浏览器已带 wa_session Cookie（例如先登录过门户/Office）时自动登录
+      authApi.sessionToken()
+        .then(({ data }) => {
+          login(data.access_token, data.user)
+          afterLoginNavigate()
+        })
+        .catch(() => {})
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])

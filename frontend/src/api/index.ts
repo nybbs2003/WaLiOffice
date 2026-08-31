@@ -42,6 +42,7 @@ export const authApi = {
     api.post<TokenResponse>('/auth/feishu/login', { code }),
   feishuConfig: () => api.get<{ enabled: boolean; app_id: string; redirect_uri: string }>('/auth/feishu/config'),
   getMe: () => api.get('/auth/me'),
+  sessionToken: () => api.get<TokenResponse>('/auth/session-token'),
   changePassword: (oldPassword: string, newPassword: string) =>
     api.post('/auth/change-password', { old_password: oldPassword, new_password: newPassword }),
 };
@@ -269,13 +270,4 @@ export const chatApi = {
       reader.releaseLock();
     }
   },
-};
-
-// ===== LiteLLM 网关（API Key 管理） =====
-export const llmApi = {
-  listKeys: () => api.get('/llm/keys'),
-  createKey: (payload: { name: string; models?: string[]; budget?: number | null; duration?: string }) =>
-    api.post('/llm/keys', payload),
-  revokeKey: (keyId: string) => api.delete(`/llm/keys/${encodeURIComponent(keyId)}`),
-  listModels: () => api.get('/llm/models'),
 };
