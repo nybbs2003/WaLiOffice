@@ -70,7 +70,92 @@ async fn get_session(
     if session.owner_id != user.0.id {
         return Err(AppError::Forbidden);
     }
+    let mut session = session;
+    // 历史会话里生成图片存的是厂商签名 URL（会过期），生成时字节已保存到「我的文件」，
+    // 这里按 artifact_id 找回本地文件并重写为内部稳定地址，避免对话流预览裂图。
+    if let Ok(token) = crate::auth::create_token(&user.0) {
+        rewrite_image_artifacts_to_local(&pool, &user.0.id, &token, &mut session.artifacts).await;
+    }
     Ok(Json(json!(session)))
+}
+
+/// 把图片类产物的外部 URL 重写为本地稳定地址（/api/files/{id}/stream?token=...）；
+/// 原始外部 URL 保留到 source_images，供图生图参考。
+async fn rewrite_image_artifacts_to_local(
+    pool: &crate::db::DbPool,
+    user_id: &str,
+    token: &str,
+    artifacts: &mut [crate::models::Artifact],
+) {
+    for artifact in artifacts.iter_mut() {
+        if artifact.kind != "image" {
+            continue;
+        }
+        let Some(images) = artifact
+            .content
+            .get("images")
+            .and_then(|value| value.as_array())
+            .cloned()
+        else {
+            continue;
+        };
+        let has_external = images.iter().any(|url| {
+            url.as_str()
+                .map(|u| !u.starts_with("/api/files/") && !u.starts_with("data:"))
+                .unwrap_or(false)
+        });
+        if !has_external {
+            continue;
+        }
+        let files = match crate::db::file_repo::find_files_by_artifact_id(pool, user_id, &artifact.id).await {
+            Ok(files) => files,
+            Err(_) => continue,
+        };
+        if files.is_empty() {
+            continue;
+        }
+        let mut stable: Vec<Value> = Vec::with_capacity(images.len());
+        for (idx, url) in images.iter().enumerate() {
+            let Some(url_str) = url.as_str() else {
+                stable.push(url.clone());
+                continue;
+            };
+            if url_str.starts_with("/api/files/") || url_str.starts_with("data:") {
+                stable.push(url.clone());
+                continue;
+            }
+            let file = files
+                .iter()
+                .find(|f| {
+                    f.metadata
+                        .as_ref()
+                        .and_then(|m| m.get("image_index"))
+                        .and_then(|v| v.as_i64())
+                        == Some(idx as i64)
+                })
+                .or_else(|| {
+                    // 旧数据没有 image_index：文件数与图片数一致时按位置对齐，否则只救第一张
+                    if files.len() == images.len() {
+                        files.get(idx)
+                    } else if idx == 0 {
+                        files.first()
+                    } else {
+                        None
+                    }
+                });
+            match file {
+                Some(file) => {
+                    stable.push(json!(format!(
+                        "/api/files/{}/stream?token={}",
+                        file.id, token
+                    )));
+                }
+                None => stable.push(url.clone()),
+            }
+        }
+        artifact.content["source_images"] = json!(images);
+        artifact.content["images"] = json!(stable);
+    }
 }
 
 async fn get_messages(

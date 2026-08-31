@@ -117,22 +117,106 @@ async fn get_generated_artifact_file(
     if artifact_id.is_none() {
         return Ok(None);
     }
+    // 同一产物多张图时用 image_index 区分，避免去重后多图串成同一文件
+    let image_index = metadata
+        .and_then(|value| value.get("image_index"))
+        .and_then(|value| value.as_i64());
 
     let cfg = crate::config::config();
 
-    let row = if cfg.is_mysql() {
+    let row = match (image_index, cfg.is_mysql()) {
+        (Some(idx), true) => {
+            sqlx::query(
+                "SELECT id, owner_id, name, file_path, file_type, file_size, folder_id, description, metadata, created_at, updated_at
+                 FROM files
+                 WHERE owner_id = ?
+                   AND JSON_EXTRACT(metadata, '$.source') = 'generated_artifact'
+                   AND JSON_EXTRACT(metadata, '$.artifact_id') = ?
+                   AND JSON_EXTRACT(metadata, '$.image_index') = ?
+                 ORDER BY updated_at DESC
+                 LIMIT 1"
+            )
+            .bind(owner_id)
+            .bind(artifact_id)
+            .bind(idx)
+            .fetch_optional(pool)
+            .await?
+        }
+        (Some(idx), false) => {
+            sqlx::query(
+                "SELECT id, owner_id, name, file_path, file_type, file_size, folder_id, description, metadata, created_at, updated_at
+                 FROM files
+                 WHERE owner_id = ?
+                   AND json_extract(metadata, '$.source') = 'generated_artifact'
+                   AND json_extract(metadata, '$.artifact_id') = ?
+                   AND json_extract(metadata, '$.image_index') = ?
+                 ORDER BY updated_at DESC
+                 LIMIT 1"
+            )
+            .bind(owner_id)
+            .bind(artifact_id)
+            .bind(idx)
+            .fetch_optional(pool)
+            .await?
+        }
+        (None, true) => {
+            sqlx::query(
+                "SELECT id, owner_id, name, file_path, file_type, file_size, folder_id, description, metadata, created_at, updated_at
+                 FROM files
+                 WHERE owner_id = ?
+                   AND JSON_EXTRACT(metadata, '$.source') = 'generated_artifact'
+                   AND JSON_EXTRACT(metadata, '$.artifact_id') = ?
+                 ORDER BY updated_at DESC
+                 LIMIT 1"
+            )
+            .bind(owner_id)
+            .bind(artifact_id)
+            .fetch_optional(pool)
+            .await?
+        }
+        (None, false) => {
+            sqlx::query(
+                "SELECT id, owner_id, name, file_path, file_type, file_size, folder_id, description, metadata, created_at, updated_at
+                 FROM files
+                 WHERE owner_id = ?
+                   AND json_extract(metadata, '$.source') = 'generated_artifact'
+                   AND json_extract(metadata, '$.artifact_id') = ?
+                 ORDER BY updated_at DESC
+                 LIMIT 1"
+            )
+            .bind(owner_id)
+            .bind(artifact_id)
+            .fetch_optional(pool)
+            .await?
+        }
+    };
+
+    match row {
+        Some(r) => Ok(Some(map_file(&r)?)),
+        None => Ok(None),
+    }
+}
+
+/// 查询某产物已保存到「我的文件」的所有文件（图片类产物按 image_index 升序）。
+/// 用于加载历史会话时把过期外部图片 URL 重写为本地稳定地址。
+pub async fn find_files_by_artifact_id(
+    pool: &DbPool,
+    owner_id: &str,
+    artifact_id: &str,
+) -> AppResult<Vec<FileRow>> {
+    let cfg = crate::config::config();
+    let rows = if cfg.is_mysql() {
         sqlx::query(
             "SELECT id, owner_id, name, file_path, file_type, file_size, folder_id, description, metadata, created_at, updated_at
              FROM files
              WHERE owner_id = ?
                AND JSON_EXTRACT(metadata, '$.source') = 'generated_artifact'
                AND JSON_EXTRACT(metadata, '$.artifact_id') = ?
-             ORDER BY updated_at DESC
-             LIMIT 1"
+             ORDER BY JSON_EXTRACT(metadata, '$.image_index'), updated_at DESC"
         )
         .bind(owner_id)
         .bind(artifact_id)
-        .fetch_optional(pool)
+        .fetch_all(pool)
         .await?
     } else {
         sqlx::query(
@@ -141,19 +225,14 @@ async fn get_generated_artifact_file(
              WHERE owner_id = ?
                AND json_extract(metadata, '$.source') = 'generated_artifact'
                AND json_extract(metadata, '$.artifact_id') = ?
-             ORDER BY updated_at DESC
-             LIMIT 1"
+             ORDER BY json_extract(metadata, '$.image_index'), updated_at DESC"
         )
         .bind(owner_id)
         .bind(artifact_id)
-        .fetch_optional(pool)
+        .fetch_all(pool)
         .await?
     };
-
-    match row {
-        Some(r) => Ok(Some(map_file(&r)?)),
-        None => Ok(None),
-    }
+    rows.iter().map(map_file).collect()
 }
 
 pub async fn create_file(

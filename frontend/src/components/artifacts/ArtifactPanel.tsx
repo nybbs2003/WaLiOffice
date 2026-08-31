@@ -115,6 +115,15 @@ function MarkdownPreview({ markdown }: { markdown: string }) {
             </blockquote>
           ),
           hr: () => <hr className="my-8 border-surface-200" />,
+          img: ({ src, alt }) => (
+            <img
+              src={src}
+              alt={alt}
+              referrerPolicy="no-referrer"
+              loading="lazy"
+              className="my-3 max-h-96 max-w-full rounded-xl border border-surface-200 object-contain"
+            />
+          ),
           table: ({ children }) => (
             <div className="my-5 overflow-x-auto rounded-2xl border border-surface-200">
               <table className="min-w-full border-collapse bg-white text-sm">{children}</table>

@@ -70,6 +70,15 @@ function renderMarkdown(content: string) {
         li: ({ children }) => <li>{children}</li>,
         blockquote: ({ children }) => <blockquote className="my-2 border-l-2 border-surface-200 pl-3 text-surface-500">{children}</blockquote>,
         hr: () => <hr className="my-4 border-surface-200" />,
+        img: ({ src, alt }) => (
+          <img
+            src={src}
+            alt={alt}
+            referrerPolicy="no-referrer"
+            loading="lazy"
+            className="my-2 max-h-96 max-w-full rounded-xl border border-surface-200 object-contain"
+          />
+        ),
         table: ({ children }) => (
           <div className="my-3 max-w-full overflow-x-auto rounded-xl border border-surface-200">
             <table className="min-w-full border-collapse bg-white text-sm">{children}</table>

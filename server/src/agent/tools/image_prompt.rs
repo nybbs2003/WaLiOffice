@@ -1,4 +1,5 @@
 use async_trait::async_trait;
+use base64::Engine;
 use serde::{Deserialize, Serialize};
 use serde_json::json;
 use std::time::Duration;
@@ -103,6 +104,32 @@ fn attachment_to_data_url(attachment: &ChatAttachment) -> Option<String> {
         .map(str::trim)
         .filter(|value| !value.is_empty())
         .map(ToString::to_string)
+}
+
+/// 把内部文件地址（/api/files/{id}/...）解析成 base64 data URL，供图生图直接传给厂商；
+/// 外部 http(s) 地址和 data: 地址原样返回。
+async fn normalize_image_input(pool: &crate::db::DbPool, user_id: &str, url: &str) -> String {
+    if url.starts_with("/api/files/") {
+        let id = url
+            .trim_start_matches("/api/files/")
+            .split(['/', '?'])
+            .next()
+            .unwrap_or_default();
+        if !id.is_empty() {
+            if let Ok(Some(file)) = crate::db::file_repo::get_file(pool, user_id, id).await {
+                let path = std::path::PathBuf::from(&file.file_path);
+                if let Ok(data) = tokio::fs::read(&path).await {
+                    let mime = mime_guess::from_path(&file.name).first_or_octet_stream().to_string();
+                    return format!(
+                        "data:{};base64,{}",
+                        mime,
+                        base64::engine::general_purpose::STANDARD.encode(&data)
+                    );
+                }
+            }
+        }
+    }
+    url.to_string()
 }
 
 fn infer_image_output_spec(topic: &str) -> ImageOutputSpec {
@@ -291,7 +318,16 @@ impl OfficeTool for ImagePromptTool {
         } else {
             styles
         };
-        let image_inputs = collect_image_inputs(ctx, &input);
+        let image_inputs_raw = collect_image_inputs(ctx, &input);
+        // 内部文件地址归一化为 base64，图生图引用不受外部签名过期影响
+        let image_inputs = {
+            let pool = crate::state::db_pool();
+            let mut normalized = Vec::with_capacity(image_inputs_raw.len());
+            for url in image_inputs_raw {
+                normalized.push(normalize_image_input(&pool, &ctx.user_id, &url).await);
+            }
+            normalized
+        };
         let wants_image_to_image = input
             .get("mode")
             .and_then(|v| v.as_str())

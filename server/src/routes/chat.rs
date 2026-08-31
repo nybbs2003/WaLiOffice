@@ -410,9 +410,9 @@ async fn save_file_bytes(
     mime_type: &str,
     description: &str,
     metadata: serde_json::Value,
-) -> anyhow::Result<()> {
+) -> anyhow::Result<Option<String>> {
     if data.is_empty() {
-        return Ok(());
+        return Ok(None);
     }
     let safe_name = sanitize_filename(name, "walioffice-file.bin");
     let extension = FsPath::new(&safe_name)
@@ -427,7 +427,7 @@ async fn save_file_bytes(
     let storage_path = storage_dir.join(storage_name);
     tokio::fs::write(&storage_path, data).await?;
     let file_type = infer_file_type(&safe_name, mime_type);
-    file_repo::create_file(
+    let row = file_repo::create_file(
         pool,
         owner_id,
         &safe_name,
@@ -438,7 +438,7 @@ async fn save_file_bytes(
         Some(description),
         Some(metadata),
     ).await?;
-    Ok(())
+    Ok(Some(row.id))
 }
 
 fn decode_data_url(value: &str) -> Option<(String, Vec<u8>)> {
@@ -503,14 +503,14 @@ async fn save_media_url_to_files(
     fallback_extension: &str,
     description: &str,
     metadata: serde_json::Value,
-) {
+) -> Option<String> {
     if let Some((mime_type, data)) = decode_data_url(url) {
         let filename = artifact_filename(
             artifact,
             fallback_name,
             &mime_extension(&mime_type, fallback_extension),
         );
-        let _ = save_file_bytes(
+        return save_file_bytes(
             pool,
             owner_id,
             &filename,
@@ -519,8 +519,9 @@ async fn save_media_url_to_files(
             description,
             metadata,
         )
-        .await;
-        return;
+        .await
+        .ok()
+        .flatten();
     }
 
     if url.starts_with("http://") || url.starts_with("https://") {
@@ -530,7 +531,7 @@ async fn save_media_url_to_files(
                 fallback_name,
                 &mime_extension(&mime_type, fallback_extension),
             );
-            let _ = save_file_bytes(
+            return save_file_bytes(
                 pool,
                 owner_id,
                 &filename,
@@ -539,13 +540,14 @@ async fn save_media_url_to_files(
                 description,
                 metadata,
             )
-            .await;
-            return;
+            .await
+            .ok()
+            .flatten();
         }
     }
 
     let filename = artifact_filename(artifact, &format!("{fallback_name}-link"), ".url.txt");
-    let _ = save_file_bytes(
+    save_file_bytes(
         pool,
         owner_id,
         &filename,
@@ -554,7 +556,9 @@ async fn save_media_url_to_files(
         description,
         metadata,
     )
-    .await;
+    .await
+    .ok()
+    .flatten()
 }
 
 async fn save_chat_attachments_to_files(
@@ -631,7 +635,12 @@ fn artifact_filename(artifact: &Artifact, fallback: &str, extension: &str) -> St
     ensure_extension(&sanitize_filename(&artifact.title, fallback), extension)
 }
 
-async fn save_generated_artifact_to_files(pool: &DbPool, owner_id: &str, artifact: &Artifact) {
+async fn save_generated_artifact_to_files(
+    pool: &DbPool,
+    owner_id: &str,
+    artifact: &mut Artifact,
+    stream_token: Option<&str>,
+) {
     tracing::info!("保存生成产物到文件: kind={}, title={}, artifact_id={}", artifact.kind, artifact.title, artifact.id);
     let description = format!("智能助手生成：{}", artifact.title);
     let metadata = serde_json::json!({
@@ -790,31 +799,56 @@ async fn save_generated_artifact_to_files(pool: &DbPool, owner_id: &str, artifac
             }
         }
         "image" => {
-            // 保存全部生成图片（不再只取第一张），文件名带序号避免重复
+            // 保存全部生成图片，并把 artifact 里的图片地址重写为本地稳定地址，
+            // 避免外部签名 URL 过期后对话预览失效（「我的文件」正常但对话流裂图）。
             if let Some(images) = artifact
                 .content
                 .get("images")
                 .and_then(|value| value.as_array())
+                .cloned()
             {
                 let multi = images.len() > 1;
+                let mut stable_urls: Vec<serde_json::Value> = Vec::new();
                 for (idx, url) in images.iter().enumerate() {
-                    let Some(url) = url.as_str() else { continue };
+                    let Some(url_str) = url.as_str() else {
+                        stable_urls.push(url.clone());
+                        continue;
+                    };
                     let mut numbered = artifact.clone();
                     if multi {
                         numbered.title = format!("{}-{}", artifact.title, idx + 1);
                     }
-                    save_media_url_to_files(
+                    // 每张图带唯一索引，避免 create_file 按 artifact_id 去重后多图串成同一文件
+                    let mut image_meta = metadata.clone();
+                    if let Some(obj) = image_meta.as_object_mut() {
+                        obj.insert("image_index".into(), serde_json::json!(idx));
+                    }
+                    let file_id = save_media_url_to_files(
                         pool,
                         owner_id,
                         &numbered,
-                        url,
+                        url_str,
                         "image/",
                         "image",
                         ".png",
                         &description,
-                        metadata.clone(),
+                        image_meta,
                     )
                     .await;
+                    match (file_id, stream_token) {
+                        (Some(id), Some(token)) => {
+                            stable_urls.push(serde_json::json!(format!(
+                                "/api/files/{}/stream?token={}",
+                                id, token
+                            )));
+                        }
+                        _ => stable_urls.push(url.clone()),
+                    }
+                }
+                if !stable_urls.is_empty() {
+                    // 原始外部 URL 保留给图生图参考，images 换成本地稳定地址供预览
+                    artifact.content["source_images"] = serde_json::json!(images);
+                    artifact.content["images"] = serde_json::json!(stable_urls);
                 }
             }
         }
@@ -998,6 +1032,7 @@ async fn chat_stream(
     let session_id_for_save = session_id.clone();
     let pool_for_save = pool.clone();
     let user_id_for_save = user_id.clone();
+    let user_for_save = user.0.clone();
     let existing_artifacts_for_save = existing_artifacts.clone();
     if let Some(attachments) = req.attachments.as_ref() {
         ctx.send(
@@ -1028,6 +1063,8 @@ async fn chat_stream(
         let mut final_summary = String::new();
         let mut collected_artifacts: Vec<crate::models::Artifact> = Vec::new();
         let mut saved_artifact_ids = HashSet::new();
+        // 为生成图片签发内部预览地址的访问 token（/api/files/{id}/stream?token=...）
+        let stream_token_for_save = crate::auth::create_token(&user_for_save).ok();
 
         while let Some(event) = event_rx.recv().await {
             let sse_event = match &event {
@@ -1057,15 +1094,17 @@ async fn chat_stream(
                     }).to_string())
                 }
                 AgentEvent::Artifact { artifact } => {
-                    collected_artifacts.push(artifact.clone());
+                    let mut artifact_owned = artifact.clone();
                     if saved_artifact_ids.insert(artifact.id.clone()) {
                         save_generated_artifact_to_files(
                             &pool_for_save,
                             &user_id_for_save,
-                            artifact,
+                            &mut artifact_owned,
+                            stream_token_for_save.as_deref(),
                         )
                         .await;
                     }
+                    collected_artifacts.push(artifact_owned.clone());
                     let session_artifacts = merge_session_artifacts(
                         existing_artifacts_for_save.clone(),
                         collected_artifacts.clone(),
@@ -1076,7 +1115,7 @@ async fn chat_stream(
                         &session_artifacts,
                     ).await;
                     Event::default().event("artifact_update").data(serde_json::json!({
-                        "artifact": artifact,
+                        "artifact": artifact_owned,
                         "artifacts": session_artifacts,
                         "session_id": session_id_for_save,
                         "tool_kind": artifact.tool_kind,
@@ -1108,20 +1147,23 @@ async fn chat_stream(
                     {
                         collected_artifacts.push(build_summary_markdown_artifact(&summary, requested_tool_kind.as_deref()));
                     }
-                    let session_artifacts = merge_session_artifacts(
-                        existing_artifacts_for_save.clone(),
-                        collected_artifacts.clone(),
-                    );
-                    for artifact in &collected_artifacts {
+                    let mut collected_mut = collected_artifacts.clone();
+                    for artifact in collected_mut.iter_mut() {
                         if saved_artifact_ids.insert(artifact.id.clone()) {
                             save_generated_artifact_to_files(
                                 &pool_for_save,
                                 &user_id_for_save,
                                 artifact,
+                                stream_token_for_save.as_deref(),
                             )
                             .await;
                         }
                     }
+                    collected_artifacts = collected_mut;
+                    let session_artifacts = merge_session_artifacts(
+                        existing_artifacts_for_save.clone(),
+                        collected_artifacts.clone(),
+                    );
                     let _ = session_repo::update_summary(
                         &pool_for_save,
                         &session_id_for_save,
