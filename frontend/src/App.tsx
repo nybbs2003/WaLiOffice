@@ -5,6 +5,7 @@ import Login from '@/pages/Login'
 import { AppLayout } from '@/components/layout/AppLayout'
 
 const Studio = lazy(() => import('@/pages/Studio'))
+const DashboardPage = lazy(() => import('@/pages/Dashboard'))
 const FilesPage = lazy(() => import('@/pages/files/FilesPage'))
 const AdminPage = lazy(() => import('@/pages/AdminPage'))
 
@@ -28,11 +29,12 @@ function App() {
     <Suspense fallback={<Loading />}>
       <Routes>
         <Route path="/login" element={<Navigate to="/" />} />
-        <Route path="/" element={<Studio />} />
+        {/* 办公助手：独立全屏工作台 */}
+        <Route path="/office" element={<Studio />} />
         <Route element={<AppLayout />}>
+          <Route path="/" element={<DashboardPage />} />
           <Route path="/files" element={<FilesPage />} />
           <Route path="/admin" element={<AdminPage />} />
-          <Route path="/studio" element={<Navigate to="/" replace />} />
           <Route path="/*" element={<Navigate to="/" />} />
         </Route>
       </Routes>

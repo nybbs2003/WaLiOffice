@@ -48,14 +48,35 @@ export default function Login() {
       }
     }).catch(() => {})
 
-    // 处理飞书 OAuth 回调：URL 里带 code
+    // nginx 门禁未登录时携带 next 跳转过来：自动拉起飞书登录
     const params = new URLSearchParams(window.location.search)
     const code = params.get('code')
+    const next = params.get('next')
+    if (next) sessionStorage.setItem('wa_login_next', next)
     if (code) {
       handleFeishuCallback(code)
+    } else if (next && feishuEnabled && !feishuAppId) {
+      // feishuConfig 尚未返回时，延迟到它返回后再自动拉起（见下方 effect）
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
+
+  // feishu 配置就绪且带 next 时，自动拉起飞书授权（避免多一次点击）
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search)
+    const code = params.get('code')
+    const next = params.get('next')
+    if (!code && next && feishuEnabled && feishuAppId && !loading) {
+      handleFeishuLogin()
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [feishuEnabled, feishuAppId])
+
+  const afterLoginNavigate = () => {
+    const next = sessionStorage.getItem('wa_login_next')
+    sessionStorage.removeItem('wa_login_next')
+    navigate(next && next.startsWith('/') ? next : '/')
+  }
 
   const handleFeishuCallback = async (code: string) => {
     setLoading(true)
@@ -63,7 +84,7 @@ export default function Login() {
     try {
       const { data } = await authApi.feishuLogin(code)
       login(data.access_token, data.user)
-      navigate('/')
+      afterLoginNavigate()
     } catch (err: any) {
       setError(err.response?.data?.detail || '飞书登录失败')
     } finally {
@@ -88,7 +109,7 @@ export default function Login() {
     try {
       const { data } = await authApi.verificationLogin(verificationCode.trim())
       login(data.access_token, data.user)
-      navigate('/')
+      afterLoginNavigate()
     } catch (err: any) {
       setError(err.response?.data?.detail || '登录失败，请重新获取验证码')
     } finally {
@@ -105,7 +126,7 @@ export default function Login() {
     try {
       const { data } = await authApi.login(username.trim(), password)
       login(data.access_token, data.user)
-      navigate('/')
+      afterLoginNavigate()
     } catch (err: any) {
       setError(err.response?.data?.detail || '用户名或密码错误')
     } finally {
@@ -122,7 +143,7 @@ export default function Login() {
     try {
       const { data } = await authApi.register(regUsername.trim(), regEmail.trim(), regPassword)
       login(data.access_token, data.user)
-      navigate('/')
+      afterLoginNavigate()
     } catch (err: any) {
       setError(err.response?.data?.detail || '注册失败')
     } finally {
@@ -140,7 +161,7 @@ export default function Login() {
     try {
       const { data } = await authApi.registerByInvite(inviteCode.trim(), invUsername.trim(), invPassword)
       login(data.access_token, data.user)
-      navigate('/')
+      afterLoginNavigate()
     } catch (err: any) {
       setError(err.response?.data?.detail || '邀请注册失败')
     } finally {

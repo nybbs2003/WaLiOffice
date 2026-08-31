@@ -270,3 +270,12 @@ export const chatApi = {
     }
   },
 };
+
+// ===== LiteLLM 网关（API Key 管理） =====
+export const llmApi = {
+  listKeys: () => api.get('/llm/keys'),
+  createKey: (payload: { name: string; models?: string[]; budget?: number | null; duration?: string }) =>
+    api.post('/llm/keys', payload),
+  revokeKey: (keyId: string) => api.delete(`/llm/keys/${encodeURIComponent(keyId)}`),
+  listModels: () => api.get('/llm/models'),
+};

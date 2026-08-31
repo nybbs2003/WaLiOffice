@@ -1,13 +1,14 @@
 import { NavLink, Outlet, useNavigate } from 'react-router-dom'
 import {
-  Bell, Files, LogOut, Sparkles, Github, ShieldCheck
+  Bell, Files, LogOut, Sparkles, Github, ShieldCheck, LayoutDashboard
 } from 'lucide-react'
 import { useAuthStore } from '@/stores/auth-store'
 
 const LOGO_URL = '/logo.png'
 
 const NAV_ITEMS = [
-  { to: '/', label: '智能助手', icon: Sparkles, end: true },
+  { to: '/', label: '首页', icon: LayoutDashboard, end: true },
+  { to: '/office', label: '智能助手', icon: Sparkles, end: false },
   { to: '/files', label: '我的文件', icon: Files },
   { to: 'https://github.com/fuzhengwei/WaLiOffice', label: '开源项目', icon: Github, external: true },
 ]

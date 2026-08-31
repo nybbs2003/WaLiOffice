@@ -1,4 +1,6 @@
-use axum::routing::{get, post};
+use axum::http::header::{HeaderMap, HeaderValue, AUTHORIZATION, COOKIE, SET_COOKIE};
+use axum::response::IntoResponse;
+use axum::routing::{any, get, post};
 use axum::{Json, Router};
 use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine as _};
 use serde::Deserialize;
@@ -21,9 +23,81 @@ pub fn router() -> Router {
         .route("/api/auth/feishu/login", post(feishu_login))
         .route("/api/auth/feishu/config", get(feishu_config))
         .route("/api/auth/me", get(me))
+        .route("/api/auth/session-check", any(session_check))
 }
 
-async fn login(Json(req): Json<LoginRequest>) -> Result<Json<TokenResponse>, AppError> {
+/// 登录成功响应：签发 JWT 同时写入 HttpOnly 会话 Cookie（wa_session），
+/// 供 nginx auth_request 门禁识别登录态。
+fn session_cookie_header(token: &str) -> HeaderMap {
+    let mut headers = HeaderMap::new();
+    let cfg = crate::config::config();
+    let max_age = cfg.jwt_expiry_hours * 3600;
+    let secure = std::env::var("AIPPT_COOKIE_SECURE")
+        .map(|v| v == "true" || v == "1")
+        .unwrap_or(false);
+    let value = format!(
+        "wa_session={}; Path=/; HttpOnly; SameSite=Lax; Max-Age={}{}",
+        token,
+        max_age,
+        if secure { "; Secure" } else { "" }
+    );
+    if let Ok(value) = HeaderValue::from_str(&value) {
+        headers.insert(SET_COOKIE, value);
+    }
+    headers
+}
+
+fn auth_response(token: String, user: crate::models::User) -> axum::response::Response {
+    (
+        session_cookie_header(&token),
+        Json(TokenResponse {
+            access_token: token,
+            token_type: "bearer".into(),
+            user,
+        }),
+    )
+        .into_response()
+}
+
+/// nginx auth_request 子请求：校验 Cookie（wa_session）或 Authorization Bearer，
+/// 200 = 已登录，401 = 未登录（nginx 据此 302 到飞书登录页）。
+async fn session_check(headers: HeaderMap) -> axum::response::Response {
+    let mut ok = false;
+    if let Some(auth) = headers
+        .get(AUTHORIZATION)
+        .and_then(|v| v.to_str().ok())
+    {
+        if let Some(token) = auth.strip_prefix("Bearer ") {
+            ok = crate::auth::verify_token(token.trim()).is_ok();
+        }
+    }
+    if !ok {
+        if let Some(cookie) = headers.get(COOKIE).and_then(|v| v.to_str().ok()) {
+            for part in cookie.split(';') {
+                let part = part.trim();
+                if let Some(token) = part.strip_prefix("wa_session=") {
+                    if crate::auth::verify_token(token).is_ok() {
+                        ok = true;
+                    }
+                    break;
+                }
+            }
+        }
+    }
+    if ok {
+        axum::response::Response::builder()
+            .status(200)
+            .body(axum::body::Body::from("ok"))
+            .unwrap()
+    } else {
+        axum::response::Response::builder()
+            .status(401)
+            .body(axum::body::Body::from("unauthorized"))
+            .unwrap()
+    }
+}
+
+async fn login(Json(req): Json<LoginRequest>) -> Result<axum::response::Response, AppError> {
     let pool = state::db_pool();
     let (user, hash) = user_repo::find_by_username(&pool, &req.username)
         .await?
@@ -34,11 +108,7 @@ async fn login(Json(req): Json<LoginRequest>) -> Result<Json<TokenResponse>, App
     }
 
     let token = crate::auth::create_token(&user)?;
-    Ok(Json(TokenResponse {
-        access_token: token,
-        token_type: "bearer".into(),
-        user,
-    }))
+    Ok(auth_response(token, user))
 }
 
 #[derive(Debug, Deserialize)]
@@ -52,13 +122,13 @@ struct XApiLoginResponse {
 
 async fn verification_login(
     Json(req): Json<VerificationLoginRequest>,
-) -> Result<Json<TokenResponse>, AppError> {
+) -> Result<axum::response::Response, AppError> {
     login_with_verification(req).await
 }
 
 async fn login_with_verification(
     req: VerificationLoginRequest,
-) -> Result<Json<TokenResponse>, AppError> {
+) -> Result<axum::response::Response, AppError> {
     let code = req.code.trim();
     if code.is_empty() {
         return Err(AppError::BadRequest("请输入验证码".into()));
@@ -96,11 +166,7 @@ async fn login_with_verification(
     let user = user_repo::find_or_create_external(&pool, &username).await?;
     let token = crate::auth::create_token(&user)?;
 
-    Ok(Json(TokenResponse {
-        access_token: token,
-        token_type: "bearer".into(),
-        user,
-    }))
+    Ok(auth_response(token, user))
 }
 
 fn extract_openid_from_x_api_token(token: &str) -> Option<String> {
@@ -110,7 +176,7 @@ fn extract_openid_from_x_api_token(token: &str) -> Option<String> {
     value.get("openId")?.as_str().map(ToString::to_string)
 }
 
-async fn register(Json(req): Json<RegisterRequest>) -> Result<Json<TokenResponse>, AppError> {
+async fn register(Json(req): Json<RegisterRequest>) -> Result<axum::response::Response, AppError> {
     if req.username.len() < 3 {
         return Err(AppError::BadRequest("用户名至少 3 个字符".into()));
     }
@@ -149,11 +215,7 @@ async fn register(Json(req): Json<RegisterRequest>) -> Result<Json<TokenResponse
     };
     let token = crate::auth::create_token(&user)?;
 
-    Ok(Json(TokenResponse {
-        access_token: token,
-        token_type: "bearer".into(),
-        user,
-    }))
+    Ok(auth_response(token, user))
 }
 
 async fn me(user: AuthUser) -> Result<Json<crate::models::User>, AppError> {
@@ -163,7 +225,7 @@ async fn me(user: AuthUser) -> Result<Json<crate::models::User>, AppError> {
 /// 邀请码注册：通过租户邀请码（tenant 的 invite_code）归属到指定租户
 async fn register_by_invite(
     Json(req): Json<InviteRequest>,
-) -> Result<Json<TokenResponse>, AppError> {
+) -> Result<axum::response::Response, AppError> {
     if req.username.len() < 3 {
         return Err(AppError::BadRequest("用户名至少 3 个字符".into()));
     }
@@ -192,17 +254,13 @@ async fn register_by_invite(
     .await?;
     let token = crate::auth::create_token(&user)?;
 
-    Ok(Json(TokenResponse {
-        access_token: token,
-        token_type: "bearer".into(),
-        user,
-    }))
+    Ok(auth_response(token, user))
 }
 
 /// 飞书 OAuth 登录：code 换 token + open_id，自动建/找用户并签发 JWT
 async fn feishu_login(
     Json(req): Json<FeishuLoginRequest>,
-) -> Result<Json<TokenResponse>, AppError> {
+) -> Result<axum::response::Response, AppError> {
     let cfg = crate::config::config();
     if cfg.feishu_app_id.is_empty() || cfg.feishu_app_secret.is_empty() {
         return Err(AppError::BadRequest("服务未配置飞书登录".into()));
@@ -287,11 +345,7 @@ async fn feishu_login(
     save_feishu_token(&pool, &user.id, open_id, &token_json).await;
 
     let token = crate::auth::create_token(&user)?;
-    Ok(Json(TokenResponse {
-        access_token: token,
-        token_type: "bearer".into(),
-        user,
-    }))
+    Ok(auth_response(token, user))
 }
 
 /// 飞书登录前端配置：返回 app_id 与 redirect_uri（供前端拼授权 URL）
