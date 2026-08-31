@@ -96,8 +96,13 @@ pub struct BasicSettings {
 }
 
 /// 多模态（图片/视频）模型配置（per-user，存 user_settings）
+/// 支持多个配置实例（对齐推理模型 llm_profiles），随时切换启用。
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct MediaProfileConfig {
+    #[serde(default)]
+    pub id: String,
+    #[serde(default)]
+    pub name: String,
     #[serde(default)]
     pub base_url: String,
     #[serde(default)]
@@ -105,7 +110,13 @@ pub struct MediaProfileConfig {
     #[serde(default)]
     pub api_key: String,
     #[serde(default)]
+    pub models: Vec<String>,
+    #[serde(default)]
     pub model: String,
+    #[serde(default)]
+    pub default_model: String,
+    #[serde(default)]
+    pub has_api_key: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -155,6 +166,14 @@ pub struct AppSettings {
     pub image_profile: MediaProfileConfig,
     #[serde(default)]
     pub video_profile: MediaProfileConfig,
+    #[serde(default)]
+    pub image_profiles: Vec<MediaProfileConfig>,
+    #[serde(default)]
+    pub active_image_profile_id: String,
+    #[serde(default)]
+    pub video_profiles: Vec<MediaProfileConfig>,
+    #[serde(default)]
+    pub active_video_profile_id: String,
     pub updated_at: String,
 }
 

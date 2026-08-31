@@ -175,13 +175,18 @@ pub fn detect_video_vendor(base_url: &str) -> VideoVendor {
     }
 }
 
-/// 读取 per-user 的图片模型配置（user_settings.image_profile），env 作为 fallback。
+/// 读取 per-user 的图片模型配置（settings.image_profiles + active_image_profile_id），env 作为 fallback。
 pub async fn resolve_image_credentials(user_id: &str) -> Result<AgnesCredentials> {
     let config = crate::config::config();
     let pool = crate::state::db_pool();
 
-    // 优先读用户自己的配置
+    // 优先读用户自己的启用配置
     if let Ok(Some(settings)) = crate::db::settings_repo::find_by_user(&pool, user_id).await {
+        if let Some(p) = active_media_profile(&settings, &settings.active_image_profile_id, &settings.image_profiles) {
+            if !p.base_url.trim().is_empty() {
+                return credentials_from_config(&p.base_url, &p.api_keys, &p.api_key, "图片");
+            }
+        }
         let p = &settings.image_profile;
         if !p.base_url.trim().is_empty() {
             return credentials_from_config(&p.base_url, &p.api_keys, &p.api_key, "图片");
@@ -197,12 +202,17 @@ pub async fn resolve_image_credentials(user_id: &str) -> Result<AgnesCredentials
     )
 }
 
-/// 读取 per-user 的视频模型配置（user_settings.video_profile），env 作为 fallback。
+/// 读取 per-user 的视频模型配置（settings.video_profiles + active_video_profile_id），env 作为 fallback。
 pub async fn resolve_video_credentials(user_id: &str) -> Result<AgnesCredentials> {
     let config = crate::config::config();
     let pool = crate::state::db_pool();
 
     if let Ok(Some(settings)) = crate::db::settings_repo::find_by_user(&pool, user_id).await {
+        if let Some(p) = active_media_profile(&settings, &settings.active_video_profile_id, &settings.video_profiles) {
+            if !p.base_url.trim().is_empty() {
+                return credentials_from_config(&p.base_url, &p.api_keys, &p.api_key, "视频");
+            }
+        }
         let p = &settings.video_profile;
         if !p.base_url.trim().is_empty() {
             return credentials_from_config(&p.base_url, &p.api_keys, &p.api_key, "视频");
@@ -215,6 +225,20 @@ pub async fn resolve_video_credentials(user_id: &str) -> Result<AgnesCredentials
         &config.llm_video_api_key,
         "视频",
     )
+}
+
+/// 从多配置列表中取启用项（active id 优先，否则第一项）。
+fn active_media_profile<'a>(
+    settings: &'a crate::models::AppSettings,
+    active_id: &str,
+    profiles: &'a [crate::models::MediaProfileConfig],
+) -> Option<&'a crate::models::MediaProfileConfig> {
+    if !active_id.trim().is_empty() {
+        if let Some(p) = profiles.iter().find(|p| p.id == active_id) {
+            return Some(p);
+        }
+    }
+    profiles.first()
 }
 
 fn credentials_from_config(
@@ -251,11 +275,17 @@ fn credentials_from_config(
     })
 }
 
-/// 读取 per-user 的图片模型名（user_settings.image_profile.model），env fallback。
+/// 读取 per-user 的图片模型名（启用的图片配置），env fallback。
 pub async fn agnes_image_model(user_id: &str) -> String {
     let config = crate::config::config();
     let pool = crate::state::db_pool();
     if let Ok(Some(settings)) = crate::db::settings_repo::find_by_user(&pool, user_id).await {
+        if let Some(p) = active_media_profile(&settings, &settings.active_image_profile_id, &settings.image_profiles) {
+            let m = p.model.trim().to_string();
+            if !m.is_empty() {
+                return m;
+            }
+        }
         let m = settings.image_profile.model.trim().to_string();
         if !m.is_empty() {
             return m;
@@ -264,11 +294,17 @@ pub async fn agnes_image_model(user_id: &str) -> String {
     config.llm_image_model.trim().to_string()
 }
 
-/// 读取 per-user 的视频模型名（user_settings.video_profile.model），env fallback。
+/// 读取 per-user 的视频模型名（启用的视频配置），env fallback。
 pub async fn agnes_video_model(user_id: &str) -> String {
     let config = crate::config::config();
     let pool = crate::state::db_pool();
     if let Ok(Some(settings)) = crate::db::settings_repo::find_by_user(&pool, user_id).await {
+        if let Some(p) = active_media_profile(&settings, &settings.active_video_profile_id, &settings.video_profiles) {
+            let m = p.model.trim().to_string();
+            if !m.is_empty() {
+                return m;
+            }
+        }
         let m = settings.video_profile.model.trim().to_string();
         if !m.is_empty() {
             return m;

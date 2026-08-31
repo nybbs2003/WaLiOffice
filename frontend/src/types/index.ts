@@ -88,15 +88,24 @@ export interface AppSettings {
   nas_config?: NasConfig;
   image_profile?: MediaProfileConfig;
   video_profile?: MediaProfileConfig;
+  image_profiles?: MediaProfileConfig[];
+  active_image_profile_id?: string;
+  video_profiles?: MediaProfileConfig[];
+  active_video_profile_id?: string;
   updated_at: string;
 }
 
-// ===== 多模态（图片/视频）模型配置（per-user） =====
+// ===== 多模态（图片/视频）模型配置（per-user，支持多配置随时切换） =====
 export interface MediaProfileConfig {
+  id: string;
+  name: string;
   base_url: string;
   api_keys: string[];
   api_key: string;
+  models: string[];
   model: string;
+  default_model: string;
+  has_api_key?: boolean;
 }
 
 export interface Artifact {

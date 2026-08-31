@@ -6,7 +6,7 @@ use serde_json::json;
 use crate::auth::middleware::AuthUser;
 use crate::db::settings_repo;
 use crate::error::AppError;
-use crate::models::{AppSettings, BasicSettings, LlmProfileConfig, McpServerConfig, NasConfig};
+use crate::models::{AppSettings, BasicSettings, LlmProfileConfig, McpServerConfig, MediaProfileConfig, NasConfig};
 use crate::state;
 use crate::agent::tools::agnes_media::build_endpoint;
 use eventsource_stream::Eventsource;
@@ -65,6 +65,23 @@ pub fn default_settings() -> AppSettings {
         has_api_key: !cfg.llm_api_key.is_empty(),
     };
 
+    let image_profile = default_media_profile(
+        "default",
+        "默认图片模型服务",
+        &cfg.llm_image_base_url,
+        &cfg.llm_image_api_key,
+        &cfg.llm_image_api_keys,
+        &cfg.llm_image_model,
+    );
+    let video_profile = default_media_profile(
+        "default",
+        "默认视频模型服务",
+        &cfg.llm_video_base_url,
+        &cfg.llm_video_api_key,
+        &cfg.llm_video_api_keys,
+        &cfg.llm_video_model,
+    );
+
     AppSettings {
         llm_profiles: vec![default_profile.clone()],
         active_profile_id: default_profile.id.clone(),
@@ -83,19 +100,44 @@ pub fn default_settings() -> AppSettings {
         },
         feishu_token: Default::default(),
         nas_config: Default::default(),
-        image_profile: crate::models::MediaProfileConfig {
-            base_url: cfg.llm_image_base_url.clone(),
-            api_keys: cfg.llm_image_api_keys.clone(),
-            api_key: cfg.llm_image_api_key.clone(),
-            model: cfg.llm_image_model.clone(),
-        },
-        video_profile: crate::models::MediaProfileConfig {
-            base_url: cfg.llm_video_base_url.clone(),
-            api_keys: cfg.llm_video_api_keys.clone(),
-            api_key: cfg.llm_video_api_key.clone(),
-            model: cfg.llm_video_model.clone(),
-        },
+        image_profile: image_profile.clone(),
+        video_profile: video_profile.clone(),
+        image_profiles: vec![image_profile.clone()],
+        active_image_profile_id: image_profile.id.clone(),
+        video_profiles: vec![video_profile.clone()],
+        active_video_profile_id: video_profile.id.clone(),
         updated_at: chrono::Utc::now().to_rfc3339(),
+    }
+}
+
+fn default_media_profile(
+    id: &str,
+    name: &str,
+    base_url: &str,
+    api_key: &str,
+    api_keys: &[String],
+    model: &str,
+) -> MediaProfileConfig {
+    let mut keys: Vec<String> = api_keys
+        .iter()
+        .map(|s| s.trim().to_string())
+        .filter(|s| !s.is_empty())
+        .collect();
+    let key = api_key.trim().to_string();
+    if !key.is_empty() && !keys.iter().any(|item| item == &key) {
+        keys.push(key.clone());
+    }
+    let model = model.trim().to_string();
+    MediaProfileConfig {
+        id: id.into(),
+        name: name.into(),
+        base_url: base_url.trim().to_string(),
+        api_keys: keys.clone(),
+        api_key: key,
+        models: if model.is_empty() { vec![] } else { vec![model.clone()] },
+        model: model.clone(),
+        default_model: model,
+        has_api_key: !keys.is_empty(),
     }
 }
 
@@ -117,6 +159,99 @@ fn configured_models(cfg: &crate::config::Config) -> Vec<String> {
 
 fn builtin_mcp_servers() -> Vec<McpServerConfig> {
     vec![]
+}
+
+/// 规范化图片/视频多配置：迁移旧单字段 → 列表，补齐 id/name/models，修正启用项。
+fn normalize_media_profiles(
+    profiles: &mut Vec<MediaProfileConfig>,
+    legacy: &MediaProfileConfig,
+    active_id: &mut String,
+    kind: &str,
+) -> Result<(), AppError> {
+    // 迁移：新列表为空但存在旧单字段配置（旧版本数据）
+    if profiles.is_empty() {
+        let has_legacy = !legacy.base_url.trim().is_empty()
+            || !legacy.model.trim().is_empty()
+            || !legacy.api_key.trim().is_empty()
+            || !legacy.api_keys.is_empty();
+        if has_legacy {
+            let mut p = legacy.clone();
+            if p.id.trim().is_empty() {
+                p.id = "default".into();
+            }
+            if p.name.trim().is_empty() {
+                p.name = format!("默认{kind}模型服务");
+            }
+            profiles.push(p);
+        }
+    }
+
+    for profile in profiles.iter_mut() {
+        if profile.id.trim().is_empty() {
+            profile.id = uuid::Uuid::new_v4().to_string();
+        }
+        if profile.name.trim().is_empty() {
+            profile.name = format!("未命名{kind}模型服务");
+        }
+        let mut api_keys: Vec<String> = Vec::new();
+        for api_key in profile.api_keys.iter().chain(std::iter::once(&profile.api_key)) {
+            let api_key = api_key.trim().to_string();
+            if !api_key.is_empty() && !api_keys.iter().any(|item| item == &api_key) {
+                api_keys.push(api_key);
+            }
+        }
+        profile.api_keys = api_keys;
+        profile.api_key = String::new();
+        // 模型：旧单字段 model 合并进 models
+        let legacy_model = profile.model.trim().to_string();
+        if !legacy_model.is_empty() && !profile.models.iter().any(|m| m == &legacy_model) {
+            profile.models.push(legacy_model);
+        }
+        profile.models = profile
+            .models
+            .iter()
+            .map(|item| item.trim().to_string())
+            .filter(|item| !item.is_empty())
+            .collect();
+        if profile.default_model.trim().is_empty() || !profile.models.iter().any(|m| m == &profile.default_model) {
+            profile.default_model = profile.models.first().cloned().unwrap_or_default();
+        }
+        profile.model = profile.default_model.clone();
+        profile.has_api_key = !profile.api_keys.is_empty();
+    }
+
+    // 空列表：从环境变量兜底生成一个（保持 env fallback 语义）
+    if profiles.is_empty() {
+        let cfg = crate::config::config();
+        let (base_url, api_key, api_keys, model) = if kind == "图片" {
+            (
+                &cfg.llm_image_base_url,
+                &cfg.llm_image_api_key,
+                &cfg.llm_image_api_keys,
+                &cfg.llm_image_model,
+            )
+        } else {
+            (
+                &cfg.llm_video_base_url,
+                &cfg.llm_video_api_key,
+                &cfg.llm_video_api_keys,
+                &cfg.llm_video_model,
+            )
+        };
+        profiles.push(default_media_profile(
+            "default",
+            &format!("默认{kind}模型服务"),
+            base_url,
+            api_key,
+            api_keys,
+            model,
+        ));
+    }
+
+    if !profiles.iter().any(|p| p.id == *active_id) {
+        *active_id = profiles[0].id.clone();
+    }
+    Ok(())
 }
 
 pub fn normalize_settings(mut settings: AppSettings) -> Result<AppSettings, AppError> {
@@ -198,6 +333,38 @@ pub fn normalize_settings(mut settings: AppSettings) -> Result<AppSettings, AppE
             .any(|item| item == &settings.active_model)
     {
         settings.active_model = settings.default_model.clone();
+    }
+
+    // 图片/视频多配置：迁移旧单字段 → 列表并规范化（与推理模型一致的「多配置随时切换」）
+    {
+        let legacy = settings.image_profile.clone();
+        normalize_media_profiles(
+            &mut settings.image_profiles,
+            &legacy,
+            &mut settings.active_image_profile_id,
+            "图片",
+        )?;
+        settings.image_profile = settings
+            .image_profiles
+            .iter()
+            .find(|p| p.id == settings.active_image_profile_id)
+            .cloned()
+            .unwrap_or_else(|| settings.image_profiles[0].clone());
+    }
+    {
+        let legacy = settings.video_profile.clone();
+        normalize_media_profiles(
+            &mut settings.video_profiles,
+            &legacy,
+            &mut settings.active_video_profile_id,
+            "视频",
+        )?;
+        settings.video_profile = settings
+            .video_profiles
+            .iter()
+            .find(|p| p.id == settings.active_video_profile_id)
+            .cloned()
+            .unwrap_or_else(|| settings.video_profiles[0].clone());
     }
 
     if settings.basic.app_name.trim().is_empty() {

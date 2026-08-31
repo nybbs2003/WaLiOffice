@@ -2,7 +2,7 @@ import { Check, KeyRound, Plus, Trash2, X, Cpu, LayoutDashboard, Search, Loader2
 import { ModelCombobox } from './ModelCombobox'
 import { useEffect, useMemo, useState } from 'react'
 import { settingsApi } from '@/api'
-import type { AppSettings, LLMProfile, MCPServiceConfig } from '@/types'
+import type { AppSettings, LLMProfile, MCPServiceConfig, MediaProfileConfig } from '@/types'
 
 interface SettingsDialogProps {
   open: boolean
@@ -20,6 +20,54 @@ const emptyProfile = (): LLMProfile => ({
   models: [],
   default_model: '',
 })
+
+const emptyMediaProfile = (kind: 'image' | 'video'): MediaProfileConfig => ({
+  id: `profile-${Date.now()}`,
+  name: kind === 'image' ? '新的图片模型服务' : '新的视频模型服务',
+  base_url: '',
+  api_key: '',
+  api_keys: [],
+  models: [],
+  model: '',
+  default_model: '',
+})
+
+/// 多配置列表兼容旧单字段：未升级的存量设置自动包装成单元素列表
+function getMediaProfiles(draft: AppSettings, kind: 'image' | 'video'): MediaProfileConfig[] {
+  const list = kind === 'image' ? draft.image_profiles : draft.video_profiles
+  if (Array.isArray(list) && list.length > 0) return list
+  const legacy = kind === 'image' ? draft.image_profile : draft.video_profile
+  if (legacy && (legacy.base_url || legacy.model || legacy.api_key)) {
+    const profile: MediaProfileConfig = {
+      id: legacy.id || 'default',
+      name: legacy.name || (kind === 'image' ? '默认图片模型服务' : '默认视频模型服务'),
+      base_url: legacy.base_url || '',
+      api_keys: legacy.api_keys || [],
+      api_key: legacy.api_key || '',
+      models: legacy.models && legacy.models.length > 0 ? legacy.models : legacy.model ? [legacy.model] : [],
+      model: legacy.model || '',
+      default_model: legacy.default_model || legacy.model || '',
+      has_api_key: legacy.has_api_key,
+    }
+    return [profile]
+  }
+  return []
+}
+
+function getActiveMediaId(draft: AppSettings, kind: 'image' | 'video'): string {
+  const activeId = kind === 'image' ? draft.active_image_profile_id : draft.active_video_profile_id
+  if (activeId) return activeId
+  const profiles = getMediaProfiles(draft, kind)
+  return profiles[0]?.id || ''
+}
+
+function getMediaKeys(profile: MediaProfileConfig) {
+  const keys = Array.isArray(profile.api_keys) ? profile.api_keys : []
+  const merged = [...keys, profile.api_key || '']
+    .map((item) => item.trim())
+    .filter(Boolean)
+  return Array.from(new Set(merged))
+}
 
 function getProfileKeys(profile: LLMProfile) {
   const keys = Array.isArray(profile.api_keys) ? profile.api_keys : []
@@ -132,6 +180,64 @@ export function SettingsDialog({ open, settings, onClose, onSave }: SettingsDial
 
   const removeMcp = (id: string) => updateDraft({ mcp_servers: draft.mcp_servers.filter((server) => server.id !== id) })
 
+  // ── 图片/视频多配置（与推理模型一致的「多配置随时切换」） ──
+  const updateMediaProfile = (kind: 'image' | 'video', id: string, patch: Partial<MediaProfileConfig>) => {
+    const listKey = kind === 'image' ? 'image_profiles' : 'video_profiles'
+    const activeKey = kind === 'image' ? 'active_image_profile_id' : 'active_video_profile_id'
+    const profiles = getMediaProfiles(draft, kind)
+    const nextProfiles = profiles.map((profile) => {
+      if (profile.id !== id) return profile
+      const next = { ...profile, ...patch }
+      // model 是默认模型（单模型为主，models 同步）
+      const models = next.models && next.models.length > 0 ? next.models : next.model ? [next.model] : []
+      if (!next.model) next.model = models[0] || ''
+      return { ...next, models }
+    })
+    const patchObj: Partial<AppSettings> = { [listKey]: nextProfiles } as Partial<AppSettings>
+    const legacyKey = kind === 'image' ? 'image_profile' : 'video_profile'
+    if (nextProfiles.length > 0 && getActiveMediaId(draft, kind) === id) {
+      patchObj[legacyKey as 'image_profile'] = nextProfiles.find((p) => p.id === id) as any
+    }
+    updateDraft(patchObj)
+  }
+
+  const setActiveMediaProfile = (kind: 'image' | 'video', id: string) => {
+    const activeKey = kind === 'image' ? 'active_image_profile_id' : 'active_video_profile_id'
+    const legacyKey = kind === 'image' ? 'image_profile' : 'video_profile'
+    const profiles = getMediaProfiles(draft, kind)
+    const profile = profiles.find((p) => p.id === id)
+    if (!profile) return
+    updateDraft({ [activeKey]: id, [legacyKey]: profile } as Partial<AppSettings>)
+  }
+
+  const addMediaProfile = (kind: 'image' | 'video') => {
+    const listKey = kind === 'image' ? 'image_profiles' : 'video_profiles'
+    const activeKey = kind === 'image' ? 'active_image_profile_id' : 'active_video_profile_id'
+    const legacyKey = kind === 'image' ? 'image_profile' : 'video_profile'
+    const profiles = getMediaProfiles(draft, kind)
+    const profile = emptyMediaProfile(kind)
+    updateDraft({
+      [listKey]: [...profiles, profile],
+      [activeKey]: profile.id,
+      [legacyKey]: profile,
+    } as Partial<AppSettings>)
+  }
+
+  const removeMediaProfile = (kind: 'image' | 'video', id: string) => {
+    const listKey = kind === 'image' ? 'image_profiles' : 'video_profiles'
+    const activeKey = kind === 'image' ? 'active_image_profile_id' : 'active_video_profile_id'
+    const legacyKey = kind === 'image' ? 'image_profile' : 'video_profile'
+    const profiles = getMediaProfiles(draft, kind)
+    if (profiles.length <= 1) return
+    const nextProfiles = profiles.filter((profile) => profile.id !== id)
+    const activeProfile = nextProfiles.find((profile) => profile.id === getActiveMediaId(draft, kind)) || nextProfiles[0]
+    updateDraft({
+      [listKey]: nextProfiles,
+      [activeKey]: activeProfile.id,
+      [legacyKey]: activeProfile,
+    } as Partial<AppSettings>)
+  }
+
   // 拉取真实模型列表
   const handleFetchModels = async (profileId: string) => {
     const profile = draft.llm_profiles.find((p) => p.id === profileId)
@@ -206,12 +312,15 @@ export function SettingsDialog({ open, settings, onClose, onSave }: SettingsDial
   }
 
   const testMedia = async (kind: 'image' | 'video') => {
-    const profile = kind === 'image' ? draft?.image_profile : draft?.video_profile
+    const profiles = getMediaProfiles(draft!, kind)
+    const activeId = getActiveMediaId(draft!, kind)
+    const profile = profiles.find((p) => p.id === activeId) || profiles[0]
     if (!profile) return
+    const keys = getMediaKeys(profile)
     setTestingMedia(kind)
     setMediaTestResult((prev) => ({ ...prev, [kind]: null }))
     try {
-      const res = await settingsApi.testLlm({ kind, base_url: profile.base_url, api_key: profile.api_key, model: profile.model })
+      const res = await settingsApi.testLlm({ kind, base_url: profile.base_url, api_key: keys[0] || profile.api_key || '', model: profile.model || profile.default_model })
       setMediaTestResult((prev) => ({
         ...prev,
         [kind]: { ok: !!res.data?.ok, message: res.data?.message || '检测完成' },
@@ -262,6 +371,12 @@ export function SettingsDialog({ open, settings, onClose, onSave }: SettingsDial
   }
 
   const activeProfile = draft.llm_profiles.find((profile) => profile.id === draft.active_profile_id) || draft.llm_profiles[0]
+  const imageProfiles = getMediaProfiles(draft, 'image')
+  const videoProfiles = getMediaProfiles(draft, 'video')
+  const activeImageId = getActiveMediaId(draft, 'image')
+  const activeVideoId = getActiveMediaId(draft, 'video')
+  const activeImageProfile = imageProfiles.find((p) => p.id === activeImageId) || imageProfiles[0]
+  const activeVideoProfile = videoProfiles.find((p) => p.id === activeVideoId) || videoProfiles[0]
 
   return (
     <div className="h-full overflow-hidden bg-transparent p-5">
@@ -575,140 +690,292 @@ export function SettingsDialog({ open, settings, onClose, onSave }: SettingsDial
 
           {section === 'image' && (
             <div>
-              <h2 className="text-xl font-bold tracking-tight text-surface-950">图片模型</h2>
-              <p className="mt-1 text-sm text-surface-500">配置生图（AI 绘画）模型的地址、密钥和模型名。每个用户单独配置，未配置时回退到环境变量。</p>
-              <div className="mt-5 space-y-4">
-                <label className="block text-sm font-semibold text-surface-600">
-                  Base URL
-                  <input
-                    value={draft.image_profile?.base_url || ''}
-                    onChange={(event) => updateDraft({ image_profile: { ...(draft.image_profile || { base_url: '', api_keys: [], api_key: '', model: '' }), base_url: event.target.value } })}
-                    placeholder="https://apihub.agnes-ai.com"
-                    className="mt-2 w-full rounded-2xl border border-black/10 bg-white px-3 py-2.5 font-mono text-sm outline-none focus:border-surface-500"
-                  />
-                </label>
-                <label className="block text-sm font-semibold text-surface-600">
-                  API Key（多个用逗号分隔，做负载均衡）
-                  <input
-                    type="password"
-                    value={draft.image_profile?.api_key || ''}
-                    onChange={(event) => updateDraft({ image_profile: { ...(draft.image_profile || { base_url: '', api_keys: [], model: '' }), api_key: event.target.value } })}
-                    placeholder="sk-..."
-                    className="mt-2 w-full rounded-2xl border border-black/10 bg-white px-3 py-2.5 font-mono text-sm outline-none focus:border-surface-500"
-                  />
-                </label>
-                <label className="block text-sm font-semibold text-surface-600">
-                  模型名
-                  <input
-                    value={draft.image_profile?.model || ''}
-                    onChange={(event) => updateDraft({ image_profile: { ...(draft.image_profile || { base_url: '', api_keys: [], api_key: '' }), model: event.target.value } })}
-                    placeholder="agnes-image-2.1-flash"
-                    className="mt-2 w-full rounded-2xl border border-black/10 bg-white px-3 py-2.5 font-mono text-sm outline-none focus:border-surface-500"
-                  />
-                </label>
-
-                {/* 推荐模型快捷选择（火山方舟 Seedream，标注组图能力） */}
-                <div className="rounded-2xl border border-surface-200 bg-surface-50/60 p-3">
-                  <div className="mb-2 flex items-center gap-1.5 text-xs font-semibold text-surface-500">
-                    <span>推荐模型（火山方舟）</span>
-                    <span className="rounded-full bg-amber-100 px-1.5 py-0.5 text-[10px] text-amber-700">支持组图</span>
-                  </div>
-                  <div className="flex flex-wrap gap-1.5">
-                    {[
-                      { model: 'doubao-seedream-5-0-260128', label: '5.0 标准', seq: true },
-                      { model: 'doubao-seedream-5-0-lite-260128', label: '5.0 Lite', seq: true },
-                      { model: 'doubao-seedream-4-5-251128', label: '4.5', seq: true },
-                      { model: 'doubao-seedream-5-0-pro-260628', label: '5.0 Pro', seq: false },
-                    ].map((item) => {
-                      const active = (draft.image_profile?.model || '') === item.model
-                      return (
-                        <button
-                          key={item.model}
-                          type="button"
-                          onClick={() => updateDraft({ image_profile: { ...(draft.image_profile || { base_url: '', api_keys: [], api_key: '' }), model: item.model } })}
-                          className={`inline-flex items-center gap-1 rounded-lg px-2.5 py-1.5 text-[11px] font-medium transition ${
-                            active
-                              ? 'bg-indigo-500 text-white'
-                              : 'bg-white text-surface-600 border border-surface-200 hover:bg-indigo-50'
-                          }`}
-                        >
-                          <span>{item.label}</span>
-                          {item.seq && <span className={`rounded px-1 text-[9px] leading-4 ${active ? 'bg-white/20 text-white' : 'bg-emerald-100 text-emerald-700'}`}>组图</span>}
-                        </button>
-                      )
-                    })}
-                  </div>
-                  <p className="mt-2 text-[11px] leading-relaxed text-surface-400">
-                    标注「组图」的模型支持一次生成多张图（更快）；Pro 仅支持单图，将自动并行生成。选 Pro 需将 Base URL 设为火山方舟地址（如 https://ark.cn-beijing.volces.com/api/v3）。
-                  </p>
+              <div className="mb-5 flex items-start justify-between gap-4">
+                <div>
+                  <h2 className="text-xl font-bold tracking-tight text-surface-950">图片模型</h2>
+                  <p className="mt-1 text-sm text-surface-500">保存多个生图模型服务，随时切换启用；未配置时回退到环境变量。</p>
                 </div>
-
-                <button
-                  type="button"
-                  onClick={() => testMedia('image')}
-                  disabled={testingMedia === 'image'}
-                  className="flex items-center gap-2 rounded-2xl border border-surface-300 bg-white px-4 py-2 text-sm font-semibold text-surface-700 transition hover:bg-surface-50 disabled:cursor-not-allowed disabled:opacity-50"
-                >
-                  {testingMedia === 'image' ? '检测中...' : '检测能力'}
+                <button onClick={() => addMediaProfile('image')} className="inline-flex items-center gap-1.5 rounded-full bg-surface-950 px-4 py-2 text-sm font-semibold text-white hover:bg-surface-800">
+                  <Plus className="h-4 w-4" />
+                  添加配置
                 </button>
+              </div>
 
-                {mediaTestResult.image && (
-                  <div className={`rounded-lg px-3 py-2 text-sm break-all whitespace-pre-wrap leading-relaxed ${mediaTestResult.image.ok ? 'bg-emerald-50 text-emerald-700' : 'bg-red-50 text-red-600'}`}>
-                    {mediaTestResult.image.message}
+              {imageProfiles.length > 0 && (
+                <div className="mb-5 rounded-[1.5rem] border border-black/[0.06] bg-[#f8f5ee]/80 p-4">
+                  <label className="mb-2 block text-xs font-bold uppercase tracking-[0.14em] text-surface-500">当前启用配置</label>
+                  <div className="grid gap-3 md:grid-cols-2">
+                    <select
+                      value={activeImageId}
+                      onChange={(event) => setActiveMediaProfile('image', event.target.value)}
+                      className="rounded-2xl border border-black/10 bg-white px-3 py-2.5 text-sm outline-none focus:border-surface-500"
+                    >
+                      {imageProfiles.map((profile) => (
+                        <option key={profile.id} value={profile.id}>{profile.name}</option>
+                      ))}
+                    </select>
+                    <div className="flex items-center gap-2">
+                      <input
+                        value={activeImageProfile?.model || ''}
+                        onChange={(event) => activeImageProfile && updateMediaProfile('image', activeImageProfile.id, { model: event.target.value, models: [event.target.value] })}
+                        placeholder="模型名"
+                        className="min-w-0 flex-1 rounded-2xl border border-black/10 bg-white px-3 py-2.5 font-mono text-sm outline-none focus:border-surface-500"
+                      />
+                      <button
+                        type="button"
+                        onClick={() => activeImageProfile && testMedia('image')}
+                        disabled={testingMedia === 'image'}
+                        className="shrink-0 rounded-2xl border border-surface-300 bg-white px-4 py-2.5 text-sm font-semibold text-surface-700 transition hover:bg-surface-50 disabled:cursor-not-allowed disabled:opacity-50"
+                      >
+                        {testingMedia === 'image' ? '检测中...' : '检测能力'}
+                      </button>
+                    </div>
                   </div>
-                )}
+                  {mediaTestResult.image && (
+                    <div className={`mt-3 rounded-lg px-3 py-2 text-sm break-all whitespace-pre-wrap leading-relaxed ${mediaTestResult.image.ok ? 'bg-emerald-50 text-emerald-700' : 'bg-red-50 text-red-600'}`}>
+                      {mediaTestResult.image.message}
+                    </div>
+                  )}
+                </div>
+              )}
+
+              <div className="grid gap-4 xl:grid-cols-2">
+                {imageProfiles.map((profile) => {
+                  const isActive = activeImageId === profile.id
+                  return (
+                    <div key={profile.id} className={`rounded-[1.6rem] border p-4 shadow-sm transition-all ${isActive ? 'border-surface-900 bg-white ring-2 ring-surface-950/5' : 'border-black/[0.06] bg-white/75'}`}>
+                      <div className="mb-4 flex items-start justify-between gap-3">
+                        <div className="min-w-0 flex-1">
+                          <input
+                            value={profile.name}
+                            onChange={(event) => updateMediaProfile('image', profile.id, { name: event.target.value })}
+                            className="w-full bg-transparent text-base font-bold text-surface-950 outline-none"
+                            placeholder="配置名称"
+                          />
+                          <div className="mt-1 flex items-center gap-2 text-[11px] text-surface-400">
+                            <KeyRound className="h-3 w-3" />
+                            Key 池 {getMediaKeys(profile).length} 个
+                          </div>
+                        </div>
+                        <div className="flex items-center gap-1.5">
+                          {isActive ? (
+                            <span className="inline-flex items-center gap-1 rounded-full bg-surface-950 px-2.5 py-1 text-[10px] font-bold text-white">
+                              <Check className="h-3 w-3" />启用中
+                            </span>
+                          ) : (
+                            <button onClick={() => setActiveMediaProfile('image', profile.id)} className="rounded-full border border-black/10 bg-white px-3 py-1 text-xs font-semibold text-surface-600 hover:bg-surface-50">启用</button>
+                          )}
+                          <button
+                            onClick={() => removeMediaProfile('image', profile.id)}
+                            disabled={imageProfiles.length <= 1}
+                            className="rounded-full p-2 text-surface-400 hover:bg-red-50 hover:text-red-600 disabled:opacity-30"
+                            title="删除配置"
+                          >
+                            <Trash2 className="h-4 w-4" />
+                          </button>
+                        </div>
+                      </div>
+
+                      <div className="space-y-3">
+                        <label className="block text-xs font-semibold text-surface-500">
+                          Base URL
+                          <input
+                            value={profile.base_url}
+                            onChange={(event) => updateMediaProfile('image', profile.id, { base_url: event.target.value })}
+                            className="mt-1.5 w-full rounded-2xl border border-black/10 bg-white px-3 py-2.5 font-mono text-sm text-surface-900 outline-none focus:border-surface-500"
+                            placeholder="https://apihub.agnes-ai.com"
+                          />
+                        </label>
+                        <label className="block text-xs font-semibold text-surface-500">
+                          API Key 池（每行一个，按请求轮询负载）
+                          <textarea
+                            value={getMediaKeys(profile).join('\n')}
+                            onChange={(event) => {
+                              const apiKeys = event.target.value.split('\n').map((item) => item.trim()).filter(Boolean)
+                              updateMediaProfile('image', profile.id, { api_keys: apiKeys, api_key: '', has_api_key: apiKeys.length > 0 })
+                            }}
+                            rows={3}
+                            placeholder="sk-..."
+                            className="mt-1.5 w-full resize-y rounded-2xl border border-black/10 bg-white px-3 py-2.5 font-mono text-xs text-surface-900 outline-none focus:border-surface-500"
+                          />
+                        </label>
+                        <label className="block text-xs font-semibold text-surface-500">
+                          模型名
+                          <input
+                            value={profile.model || ''}
+                            onChange={(event) => updateMediaProfile('image', profile.id, { model: event.target.value, models: [event.target.value], default_model: event.target.value })}
+                            className="mt-1.5 w-full rounded-2xl border border-black/10 bg-white px-3 py-2.5 font-mono text-sm text-surface-900 outline-none focus:border-surface-500"
+                            placeholder="agnes-image-2.1-flash"
+                          />
+                        </label>
+
+                        {/* 推荐模型快捷选择（火山方舟 Seedream，标注组图能力） */}
+                        <div className="rounded-2xl border border-surface-200 bg-surface-50/60 p-3">
+                          <div className="mb-2 flex items-center gap-1.5 text-xs font-semibold text-surface-500">
+                            <span>推荐模型（火山方舟）</span>
+                            <span className="rounded-full bg-amber-100 px-1.5 py-0.5 text-[10px] text-amber-700">支持组图</span>
+                          </div>
+                          <div className="flex flex-wrap gap-1.5">
+                            {[
+                              { model: 'doubao-seedream-5-0-260128', label: '5.0 标准', seq: true },
+                              { model: 'doubao-seedream-5-0-lite-260128', label: '5.0 Lite', seq: true },
+                              { model: 'doubao-seedream-4-5-251128', label: '4.5', seq: true },
+                              { model: 'doubao-seedream-5-0-pro-260628', label: '5.0 Pro', seq: false },
+                            ].map((item) => {
+                              const active = (profile.model || '') === item.model
+                              return (
+                                <button
+                                  key={item.model}
+                                  type="button"
+                                  onClick={() => updateMediaProfile('image', profile.id, { model: item.model, models: [item.model], default_model: item.model })}
+                                  className={`inline-flex items-center gap-1 rounded-lg px-2.5 py-1.5 text-[11px] font-medium transition ${
+                                    active
+                                      ? 'bg-indigo-500 text-white'
+                                      : 'bg-white text-surface-600 border border-surface-200 hover:bg-indigo-50'
+                                  }`}
+                                >
+                                  <span>{item.label}</span>
+                                  {item.seq && <span className={`rounded px-1 text-[9px] leading-4 ${active ? 'bg-white/20 text-white' : 'bg-emerald-100 text-emerald-700'}`}>组图</span>}
+                                </button>
+                              )
+                            })}
+                          </div>
+                          <p className="mt-2 text-[11px] leading-relaxed text-surface-400">
+                            标注「组图」的模型支持一次生成多张图（更快）；Pro 仅支持单图，将自动并行生成。选 Pro 需将 Base URL 设为火山方舟地址（如 https://ark.cn-beijing.volces.com/api/v3）。
+                          </p>
+                        </div>
+                      </div>
+                    </div>
+                  )
+                })}
               </div>
             </div>
           )}
 
           {section === 'video' && (
             <div>
-              <h2 className="text-xl font-bold tracking-tight text-surface-950">视频模型</h2>
-              <p className="mt-1 text-sm text-surface-500">配置生视频（AI 视频）模型的地址、密钥和模型名。每个用户单独配置，未配置时回退到环境变量。</p>
-              <div className="mt-5 space-y-4">
-                <label className="block text-sm font-semibold text-surface-600">
-                  Base URL
-                  <input
-                    value={draft.video_profile?.base_url || ''}
-                    onChange={(event) => updateDraft({ video_profile: { ...(draft.video_profile || { base_url: '', api_keys: [], api_key: '', model: '' }), base_url: event.target.value } })}
-                    placeholder="https://apihub.agnes-ai.com"
-                    className="mt-2 w-full rounded-2xl border border-black/10 bg-white px-3 py-2.5 font-mono text-sm outline-none focus:border-surface-500"
-                  />
-                </label>
-                <label className="block text-sm font-semibold text-surface-600">
-                  API Key（多个用逗号分隔，做负载均衡）
-                  <input
-                    type="password"
-                    value={draft.video_profile?.api_key || ''}
-                    onChange={(event) => updateDraft({ video_profile: { ...(draft.video_profile || { base_url: '', api_keys: [], model: '' }), api_key: event.target.value } })}
-                    placeholder="sk-..."
-                    className="mt-2 w-full rounded-2xl border border-black/10 bg-white px-3 py-2.5 font-mono text-sm outline-none focus:border-surface-500"
-                  />
-                </label>
-                <label className="block text-sm font-semibold text-surface-600">
-                  模型名
-                  <input
-                    value={draft.video_profile?.model || ''}
-                    onChange={(event) => updateDraft({ video_profile: { ...(draft.video_profile || { base_url: '', api_keys: [], api_key: '' }), model: event.target.value } })}
-                    placeholder="agnes-video-2.5"
-                    className="mt-2 w-full rounded-2xl border border-black/10 bg-white px-3 py-2.5 font-mono text-sm outline-none focus:border-surface-500"
-                  />
-                </label>
-
-                <button
-                  type="button"
-                  onClick={() => testMedia('video')}
-                  disabled={testingMedia === 'video'}
-                  className="flex items-center gap-2 rounded-2xl border border-surface-300 bg-white px-4 py-2 text-sm font-semibold text-surface-700 transition hover:bg-surface-50 disabled:cursor-not-allowed disabled:opacity-50"
-                >
-                  {testingMedia === 'video' ? '检测中...' : '检测能力'}
+              <div className="mb-5 flex items-start justify-between gap-4">
+                <div>
+                  <h2 className="text-xl font-bold tracking-tight text-surface-950">视频模型</h2>
+                  <p className="mt-1 text-sm text-surface-500">保存多个生视频模型服务，随时切换启用；未配置时回退到环境变量。</p>
+                </div>
+                <button onClick={() => addMediaProfile('video')} className="inline-flex items-center gap-1.5 rounded-full bg-surface-950 px-4 py-2 text-sm font-semibold text-white hover:bg-surface-800">
+                  <Plus className="h-4 w-4" />
+                  添加配置
                 </button>
+              </div>
 
-                {mediaTestResult.video && (
-                  <div className={`rounded-lg px-3 py-2 text-sm break-all whitespace-pre-wrap leading-relaxed ${mediaTestResult.video.ok ? 'bg-emerald-50 text-emerald-700' : 'bg-red-50 text-red-600'}`}>
-                    {mediaTestResult.video.message}
+              {videoProfiles.length > 0 && (
+                <div className="mb-5 rounded-[1.5rem] border border-black/[0.06] bg-[#f8f5ee]/80 p-4">
+                  <label className="mb-2 block text-xs font-bold uppercase tracking-[0.14em] text-surface-500">当前启用配置</label>
+                  <div className="grid gap-3 md:grid-cols-2">
+                    <select
+                      value={activeVideoId}
+                      onChange={(event) => setActiveMediaProfile('video', event.target.value)}
+                      className="rounded-2xl border border-black/10 bg-white px-3 py-2.5 text-sm outline-none focus:border-surface-500"
+                    >
+                      {videoProfiles.map((profile) => (
+                        <option key={profile.id} value={profile.id}>{profile.name}</option>
+                      ))}
+                    </select>
+                    <div className="flex items-center gap-2">
+                      <input
+                        value={activeVideoProfile?.model || ''}
+                        onChange={(event) => activeVideoProfile && updateMediaProfile('video', activeVideoProfile.id, { model: event.target.value, models: [event.target.value] })}
+                        placeholder="模型名"
+                        className="min-w-0 flex-1 rounded-2xl border border-black/10 bg-white px-3 py-2.5 font-mono text-sm outline-none focus:border-surface-500"
+                      />
+                      <button
+                        type="button"
+                        onClick={() => activeVideoProfile && testMedia('video')}
+                        disabled={testingMedia === 'video'}
+                        className="shrink-0 rounded-2xl border border-surface-300 bg-white px-4 py-2.5 text-sm font-semibold text-surface-700 transition hover:bg-surface-50 disabled:cursor-not-allowed disabled:opacity-50"
+                      >
+                        {testingMedia === 'video' ? '检测中...' : '检测能力'}
+                      </button>
+                    </div>
                   </div>
-                )}
+                  {mediaTestResult.video && (
+                    <div className={`mt-3 rounded-lg px-3 py-2 text-sm break-all whitespace-pre-wrap leading-relaxed ${mediaTestResult.video.ok ? 'bg-emerald-50 text-emerald-700' : 'bg-red-50 text-red-600'}`}>
+                      {mediaTestResult.video.message}
+                    </div>
+                  )}
+                </div>
+              )}
+
+              <div className="grid gap-4 xl:grid-cols-2">
+                {videoProfiles.map((profile) => {
+                  const isActive = activeVideoId === profile.id
+                  return (
+                    <div key={profile.id} className={`rounded-[1.6rem] border p-4 shadow-sm transition-all ${isActive ? 'border-surface-900 bg-white ring-2 ring-surface-950/5' : 'border-black/[0.06] bg-white/75'}`}>
+                      <div className="mb-4 flex items-start justify-between gap-3">
+                        <div className="min-w-0 flex-1">
+                          <input
+                            value={profile.name}
+                            onChange={(event) => updateMediaProfile('video', profile.id, { name: event.target.value })}
+                            className="w-full bg-transparent text-base font-bold text-surface-950 outline-none"
+                            placeholder="配置名称"
+                          />
+                          <div className="mt-1 flex items-center gap-2 text-[11px] text-surface-400">
+                            <KeyRound className="h-3 w-3" />
+                            Key 池 {getMediaKeys(profile).length} 个
+                          </div>
+                        </div>
+                        <div className="flex items-center gap-1.5">
+                          {isActive ? (
+                            <span className="inline-flex items-center gap-1 rounded-full bg-surface-950 px-2.5 py-1 text-[10px] font-bold text-white">
+                              <Check className="h-3 w-3" />启用中
+                            </span>
+                          ) : (
+                            <button onClick={() => setActiveMediaProfile('video', profile.id)} className="rounded-full border border-black/10 bg-white px-3 py-1 text-xs font-semibold text-surface-600 hover:bg-surface-50">启用</button>
+                          )}
+                          <button
+                            onClick={() => removeMediaProfile('video', profile.id)}
+                            disabled={videoProfiles.length <= 1}
+                            className="rounded-full p-2 text-surface-400 hover:bg-red-50 hover:text-red-600 disabled:opacity-30"
+                            title="删除配置"
+                          >
+                            <Trash2 className="h-4 w-4" />
+                          </button>
+                        </div>
+                      </div>
+
+                      <div className="space-y-3">
+                        <label className="block text-xs font-semibold text-surface-500">
+                          Base URL
+                          <input
+                            value={profile.base_url}
+                            onChange={(event) => updateMediaProfile('video', profile.id, { base_url: event.target.value })}
+                            className="mt-1.5 w-full rounded-2xl border border-black/10 bg-white px-3 py-2.5 font-mono text-sm text-surface-900 outline-none focus:border-surface-500"
+                            placeholder="https://apihub.agnes-ai.com"
+                          />
+                        </label>
+                        <label className="block text-xs font-semibold text-surface-500">
+                          API Key 池（每行一个，按请求轮询负载）
+                          <textarea
+                            value={getMediaKeys(profile).join('\n')}
+                            onChange={(event) => {
+                              const apiKeys = event.target.value.split('\n').map((item) => item.trim()).filter(Boolean)
+                              updateMediaProfile('video', profile.id, { api_keys: apiKeys, api_key: '', has_api_key: apiKeys.length > 0 })
+                            }}
+                            rows={3}
+                            placeholder="sk-..."
+                            className="mt-1.5 w-full resize-y rounded-2xl border border-black/10 bg-white px-3 py-2.5 font-mono text-xs text-surface-900 outline-none focus:border-surface-500"
+                          />
+                        </label>
+                        <label className="block text-xs font-semibold text-surface-500">
+                          模型名
+                          <input
+                            value={profile.model || ''}
+                            onChange={(event) => updateMediaProfile('video', profile.id, { model: event.target.value, models: [event.target.value], default_model: event.target.value })}
+                            className="mt-1.5 w-full rounded-2xl border border-black/10 bg-white px-3 py-2.5 font-mono text-sm text-surface-900 outline-none focus:border-surface-500"
+                            placeholder="agnes-video-2.5"
+                          />
+                        </label>
+                      </div>
+                    </div>
+                  )
+                })}
               </div>
             </div>
           )}
