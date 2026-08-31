@@ -29,7 +29,6 @@ export default function Login() {
     const params = new URLSearchParams(window.location.search)
     const code = params.get('code')
     const next = params.get('next')
-    if (next) sessionStorage.setItem('wa_login_next', next)
     if (code) {
       handleFeishuCallback(code)
     } else {
@@ -56,10 +55,8 @@ export default function Login() {
   }, [feishuEnabled, feishuAppId])
 
   const afterLoginNavigate = () => {
-    const next = sessionStorage.getItem('wa_login_next')
-    sessionStorage.removeItem('wa_login_next')
-    // 整页跳转：让 nginx 按路径路由（/ → 门户首页 Dashboard，/office → 办公助手）
-    window.location.href = next && next.startsWith('/') ? next : '/'
+    // 登录后统一整页跳转首页（/ 由 nginx 路由到门户 Dashboard）
+    window.location.href = '/'
   }
 
   const handleFeishuCallback = async (code: string) => {
