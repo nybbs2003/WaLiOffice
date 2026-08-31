@@ -8,7 +8,7 @@ use crate::agent::tool::{OfficeTool, ToolArtifact, ToolContext, ToolResult};
 
 use super::video_generate::{normalize_aspect_ratio, collect_video_audios, collect_video_refs};
 use crate::agent::tools::agnes_media::{
-    agnes_video_model, get_json, http_client, post_json, resolve_video_credentials,
+    video_model_with_override, get_json, http_client, post_json, resolve_video_credentials,
 };
 
 pub struct VideoBatchGenerateTool;
@@ -191,7 +191,7 @@ impl OfficeTool for VideoBatchGenerateTool {
             }
         };
 
-        let video_model = agnes_video_model(&ctx.user_id).await;
+        let video_model = video_model_with_override(&ctx.user_id, ctx.get_config::<String>("model").as_deref()).await;
         let client = match http_client(Duration::from_secs(90)) {
             Ok(c) => c,
             Err(err) => {

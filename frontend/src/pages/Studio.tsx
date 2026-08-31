@@ -1,4 +1,4 @@
-import { useState, useRef, useEffect } from 'react'
+import { useState, useRef, useEffect, useMemo } from 'react'
 import type React from 'react'
 import { useNavigate, useSearchParams } from 'react-router-dom'
 import { useAuthStore } from '@/stores/auth-store'
@@ -198,6 +198,26 @@ export default function Studio() {
   const [settings, setSettings] = useState<AppSettings | null>(null)
   const [selectedModel, setSelectedModel] = useState<string>('')
   const [modelProfiles, setModelProfiles] = useState<LLMProfile[]>([])
+  // 图片/视频模型动态选项：来自「启用中」的多媒体配置，供工具配置里的「模型」选项使用
+  const mediaModelOptions = useMemo(() => {
+    const build = (kind: 'image' | 'video') => {
+      const profiles = kind === 'image' ? (settings?.image_profiles || []) : (settings?.video_profiles || [])
+      const activeId = kind === 'image' ? (settings?.active_image_profile_id || '') : (settings?.active_video_profile_id || '')
+      const profile = profiles.find((item) => item.id === activeId) || profiles[0]
+      if (!profile) return []
+      const models = profile.models && profile.models.length > 0 ? profile.models : profile.model ? [profile.model] : []
+      const seen = new Set<string>()
+      const options: { value: string; label: string; description: string }[] = []
+      for (const model of models) {
+        const m = model.trim()
+        if (!m || seen.has(m)) continue
+        seen.add(m)
+        options.push({ value: m, label: m, description: `${profile.name || (kind === 'image' ? '图片模型服务' : '视频模型服务')}` })
+      }
+      return options
+    }
+    return { image: build('image'), video: build('video') }
+  }, [settings])
   // 飞书授权引导：needs_auth 信号触发
   const [feishuAuthPrompt, setFeishuAuthPrompt] = useState<{ scope: string; toolName: string } | null>(null)
 
@@ -1980,6 +2000,8 @@ export default function Studio() {
                 artifacts={artifacts}
                 activeArtifactId={activeArtifactId}
                 toolConfig={toolConfig}
+                imageModelOptions={mediaModelOptions.image}
+                videoModelOptions={mediaModelOptions.video}
                 onProjectChange={(pid) => pid ? handleSelectProject(pid) : setActiveProjectId(null)}
                 onNewProject={handleNewProject}
                 onModelChange={handleModelChange}

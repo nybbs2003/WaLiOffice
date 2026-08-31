@@ -9,7 +9,7 @@ use crate::agent::tool::{OfficeTool, ToolArtifact, ToolContext, ToolResult};
 use crate::llm::LlmClient;
 use crate::models::{ChatAttachment, ChatMessage};
 
-use super::agnes_media::{agnes_image_model, http_client, post_json_url, resolve_image_credentials, AgnesCredentials};
+use super::agnes_media::{http_client, image_model_with_override, post_json_url, resolve_image_credentials, AgnesCredentials};
 
 pub struct ImagePromptTool;
 
@@ -434,7 +434,7 @@ impl OfficeTool for ImagePromptTool {
             Ok(credentials) => credentials,
             Err(err) => return ToolResult::err(err.to_string()),
         };
-        let image_model = agnes_image_model(&ctx.user_id).await;
+        let image_model = image_model_with_override(&ctx.user_id, ctx.get_config::<String>("model").as_deref()).await;
         let endpoint = credentials.endpoint("images/generations");
         let is_volc = credentials.video_vendor() == crate::agent::tools::agnes_media::VideoVendor::Volcengine;
         let client = match http_client(Duration::from_secs(240)) {

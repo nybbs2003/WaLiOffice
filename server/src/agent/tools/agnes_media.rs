@@ -313,6 +313,53 @@ pub async fn agnes_video_model(user_id: &str) -> String {
     config.llm_video_model.trim().to_string()
 }
 
+/// 模型名解析 + 工具配置覆盖：tool_config.model 若属于启用配置的模型列表则优先。
+pub async fn image_model_with_override(user_id: &str, override_model: Option<&str>) -> String {
+    resolve_model_with_override(user_id, override_model, true).await
+}
+
+/// 模型名解析 + 工具配置覆盖（视频）。
+pub async fn video_model_with_override(user_id: &str, override_model: Option<&str>) -> String {
+    resolve_model_with_override(user_id, override_model, false).await
+}
+
+async fn resolve_model_with_override(user_id: &str, override_model: Option<&str>, is_image: bool) -> String {
+    let config = crate::config::config();
+    let pool = crate::state::db_pool();
+    let ov = override_model.map(|m| m.trim().to_string()).filter(|m| !m.is_empty());
+    if let Ok(Some(settings)) = crate::db::settings_repo::find_by_user(&pool, user_id).await {
+        let (active_id, profiles, legacy) = if is_image {
+            (&settings.active_image_profile_id, &settings.image_profiles, &settings.image_profile)
+        } else {
+            (&settings.active_video_profile_id, &settings.video_profiles, &settings.video_profile)
+        };
+        if let Some(p) = active_media_profile(&settings, active_id, profiles) {
+            // 工具配置面板指定的模型只有属于启用配置的模型列表时才生效（保证与凭据一致）
+            if let Some(ov) = ov.as_deref() {
+                if p.models.iter().any(|m| m == ov) || p.model == ov {
+                    return ov.to_string();
+                }
+            }
+            let m = p.model.trim().to_string();
+            if !m.is_empty() {
+                return m;
+            }
+        }
+        let m = legacy.model.trim().to_string();
+        if !m.is_empty() {
+            return m;
+        }
+    }
+    if let Some(ov) = ov {
+        return ov;
+    }
+    if is_image {
+        config.llm_image_model.trim().to_string()
+    } else {
+        config.llm_video_model.trim().to_string()
+    }
+}
+
 pub fn http_client(timeout: Duration) -> Result<Client> {
     Ok(Client::builder().timeout(timeout).build()?)
 }

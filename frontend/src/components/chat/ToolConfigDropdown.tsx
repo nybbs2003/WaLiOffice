@@ -9,6 +9,8 @@ interface ToolConfigDropdownProps {
   toolConfig: ToolConfigMap
   onToolConfigChange: (config: ToolConfigMap) => void
   disabled?: boolean
+  /** 动态模型选项（来自用户的多媒体配置），key=model 的选项优先使用 */
+  modelOptions?: ToolConfigOption['options']
 }
 
 /**
@@ -20,6 +22,7 @@ export function ToolConfigDropdown({
   toolConfig,
   onToolConfigChange,
   disabled = false,
+  modelOptions,
 }: ToolConfigDropdownProps) {
   const [open, setOpen] = useState(false)
   const [pos, setPos] = useState<{ top: number; right: number } | null>(null)
@@ -74,10 +77,21 @@ export function ToolConfigDropdown({
     onToolConfigChange({ ...toolConfig, [key]: value })
   }
 
+  // 模型选项：优先动态（用户多媒体配置），否则用工具内置预设
+  const resolveOptions = (opt: ToolConfigOption): ToolConfigOption['options'] | undefined => {
+    if (opt.key === 'model' && modelOptions && modelOptions.length > 0) {
+      return [
+        { value: '', label: '跟随设置', description: '使用设置中启用的模型服务' },
+        ...modelOptions,
+      ]
+    }
+    return opt.options
+  }
+
   const getActiveLabel = (opt: ToolConfigOption): string => {
     const val = toolConfig[opt.key] ?? opt.defaultValue
     if (opt.type === 'toggle') return val ? '开' : '关'
-    const match = opt.options?.find((o) => o.value === val)
+    const match = resolveOptions(opt)?.find((o) => o.value === val)
     return match?.label ?? String(val)
   }
 
@@ -172,30 +186,34 @@ export function ToolConfigDropdown({
                   {opt.label}
                 </label>
 
-                {opt.type === 'select' && opt.options && (
-                  <div className="flex flex-wrap gap-1.5">
-                    {opt.options.map((option) => {
-                      const currentValue = toolConfig[opt.key] ?? opt.defaultValue
-                      const isActive = currentValue === option.value
-                      return (
-                        <button
-                          key={option.value}
-                          onClick={() => handleChange(opt.key, option.value)}
-                          className={`
-                            flex items-center gap-1 px-2.5 py-1.5 rounded-lg text-[11px] font-medium transition-all
-                            ${isActive
-                              ? 'bg-indigo-500 text-white shadow-sm'
-                              : 'bg-gray-50 text-surface-600 hover:bg-indigo-50 border border-gray-100'
-                            }
-                          `}
-                          title={option.description}
-                        >
-                          {option.label}
-                        </button>
-                      )
-                    })}
-                  </div>
-                )}
+                {opt.type === 'select' && (() => {
+                  const opts = resolveOptions(opt)
+                  if (!opts) return null
+                  return (
+                    <div className="flex flex-wrap gap-1.5">
+                      {opts.map((option) => {
+                        const currentValue = toolConfig[opt.key] ?? opt.defaultValue
+                        const isActive = currentValue === option.value
+                        return (
+                          <button
+                            key={option.value}
+                            onClick={() => handleChange(opt.key, option.value)}
+                            className={`
+                              flex items-center gap-1 px-2.5 py-1.5 rounded-lg text-[11px] font-medium transition-all
+                              ${isActive
+                                ? 'bg-indigo-500 text-white shadow-sm'
+                                : 'bg-gray-50 text-surface-600 hover:bg-indigo-50 border border-gray-100'
+                              }
+                            `}
+                            title={option.description}
+                          >
+                            {option.label}
+                          </button>
+                        )
+                      })}
+                    </div>
+                  )
+                })()}
 
                 {opt.type === 'toggle' && (
                   <button

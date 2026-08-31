@@ -9,7 +9,7 @@ use crate::llm::LlmClient;
 use crate::models::{ChatAttachment, ChatMessage};
 
 use super::agnes_media::{
-    agnes_video_model, get_json, http_client, post_json, resolve_video_credentials,
+    video_model_with_override, get_json, http_client, post_json, resolve_video_credentials,
 };
 use super::local_video;
 
@@ -769,7 +769,7 @@ impl OfficeTool for VideoGenerateTool {
                 ).await;
             }
         };
-        let video_model = agnes_video_model(&ctx.user_id).await;
+        let video_model = video_model_with_override(&ctx.user_id, ctx.get_config::<String>("model").as_deref()).await;
         let client = match http_client(Duration::from_secs(90)) {
             Ok(client) => client,
             Err(err) => {

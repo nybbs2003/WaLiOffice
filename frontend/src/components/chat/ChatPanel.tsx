@@ -7,7 +7,7 @@ import { AlertCircle, Check, Circle, Download, Eye, Files, Loader2, Send, Sparkl
 import { AGENT_TOOLS, getAgentTool } from '@/config/agent-tools'
 import { useRef, useState, useEffect, Fragment, useMemo } from 'react'
 import { FilePickerPanel } from './FilePickerPanel'
-import type { AgentTraceEvent, Artifact, ChatAttachment, ChatMessage, InputRef, LLMProfile, PPTProject, ToolKind, ToolConfigMap } from '@/types'
+import type { AgentTraceEvent, Artifact, ChatAttachment, ChatMessage, InputRef, LLMProfile, PPTProject, ToolConfigOption, ToolKind, ToolConfigMap } from '@/types'
 import { findArtifactTurnGroup, groupArtifactsByTurn } from '@/lib/artifact-turns'
 import { ToolConfigDropdown } from './ToolConfigDropdown'
 
@@ -28,6 +28,9 @@ interface ChatPanelProps {
   artifacts: Artifact[]
   activeArtifactId: string | null
   toolConfig: ToolConfigMap
+  /** 图片/视频模型的动态选项（来自用户多媒体配置，用于工具配置里的模型选择） */
+  imageModelOptions?: ToolConfigOption['options']
+  videoModelOptions?: ToolConfigOption['options']
   onProjectChange: (projectId: string | null) => void
   onNewProject?: () => void
   onModelChange: (model: string) => void
@@ -337,6 +340,8 @@ export function ChatPanel({
   artifacts,
   activeArtifactId,
   toolConfig,
+  imageModelOptions,
+  videoModelOptions,
   onProjectChange,
   onNewProject,
   onModelChange,
@@ -1118,6 +1123,7 @@ export function ChatPanel({
                 toolConfig={toolConfig}
                 onToolConfigChange={onToolConfigChange}
                 disabled={isStreaming}
+                modelOptions={activeTool === 'image' ? imageModelOptions : activeTool === 'video' ? videoModelOptions : undefined}
               />
             </div>
           </div>
