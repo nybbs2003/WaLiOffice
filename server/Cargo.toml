@@ -74,7 +74,8 @@ urlencoding = "2"
 base64 = "0.22"
 
 [profile.release]
-opt-level = 3
-lto = true
+# 快速部署优先：关闭重量级优化（服务器小内存机编译，LTO+opt3 太慢）
+opt-level = 1
+lto = false
 strip = true
-codegen-units = 1
+codegen-units = 16
