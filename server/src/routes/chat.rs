@@ -642,6 +642,10 @@ async fn save_generated_artifact_to_files(
     stream_token: Option<&str>,
 ) {
     tracing::info!("保存生成产物到文件: kind={}, title={}, artifact_id={}", artifact.kind, artifact.title, artifact.id);
+    // 搜索结果不进「我的文件」（只存在于对话正文）
+    if artifact.kind == "search" {
+        return;
+    }
     let description = format!("智能助手生成：{}", artifact.title);
     let metadata = serde_json::json!({
         "source": "generated_artifact",

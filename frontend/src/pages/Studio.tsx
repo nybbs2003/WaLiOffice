@@ -647,7 +647,7 @@ export default function Studio() {
       } else {
         if (activeTabId) updateTab(activeTabId, { project: null, slides: [], currentSlideIndex: 0 })
       }
-      setShowArtifactPanel((session.artifacts?.length || 0) > 0 || tool !== 'general')
+      setShowArtifactPanel((session.artifacts || []).some((a: any) => a.kind !== 'search'))
       setFollowLatestSlide(false)
       setPptProgress(null)
       setStreamPhase('done')
@@ -1342,6 +1342,10 @@ export default function Studio() {
               break
 
             case 'artifact_update':
+              if (data.artifact && data.artifact.kind === 'search') {
+                // 搜索结果只进对话正文，不弹右边栏
+                break
+              }
               if (data.artifact) {
                 // 定向 upsert artifact 到 sendingTabId
                 usePPTStore.getState().updateTabFn(sendingTabId, (tab) => {
@@ -1448,7 +1452,7 @@ export default function Studio() {
                   }
                   return { ...tab, artifacts }
                 })
-                if (data.artifacts.length > 0) {
+                if ((data.artifacts || []).some((item: any) => item.kind !== 'search')) {
                   uiShowPanel(true)
                 }
               }

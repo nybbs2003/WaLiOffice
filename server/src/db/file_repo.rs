@@ -37,6 +37,15 @@ pub struct FileStats {
     pub total_files: i64,
 }
 
+/// 联网搜索结果的产物文件（metadata.artifact_kind == "search"）不在「我的文件」中展示。
+fn is_search_artifact_row(row: &FileRow) -> bool {
+    row.metadata
+        .as_ref()
+        .and_then(|m| m.get("artifact_kind"))
+        .and_then(|v| v.as_str())
+        == Some("search")
+}
+
 pub async fn list_files(
     pool: &DbPool,
     owner_id: &str,
@@ -63,7 +72,11 @@ pub async fn list_files(
 
     let mut files = Vec::new();
     for row in rows {
-        files.push(map_file(&row)?);
+        let file = map_file(&row)?;
+        if is_search_artifact_row(&file) {
+            continue;
+        }
+        files.push(file);
     }
     Ok(files)
 }
@@ -85,7 +98,11 @@ pub async fn search_files(pool: &DbPool, owner_id: &str, query: Option<&str>) ->
 
     let mut files = Vec::new();
     for row in rows {
-        files.push(map_file(&row)?);
+        let file = map_file(&row)?;
+        if is_search_artifact_row(&file) {
+            continue;
+        }
+        files.push(file);
     }
     Ok(files)
 }

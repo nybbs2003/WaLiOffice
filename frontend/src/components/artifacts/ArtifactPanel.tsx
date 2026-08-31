@@ -872,7 +872,8 @@ export function ArtifactPanel({
   const draggingRef = useRef(false)
   // 产物导航区是否展开（默认收起，预览区优先）
   const [showArtifactNav, setShowArtifactNav] = useState(false)
-  const artifactTurnGroups = useMemo(() => groupArtifactsByTurn(artifacts, messages), [artifacts, messages])
+  const visibleArtifacts = useMemo(() => artifacts.filter((item) => item.kind !== 'search'), [artifacts])
+  const artifactTurnGroups = useMemo(() => groupArtifactsByTurn(visibleArtifacts, messages), [visibleArtifacts, messages])
   const activeArtifactTurn = findArtifactTurnGroup(activeArtifact?.id || null, artifactTurnGroups)
 
   useEffect(() => {
@@ -956,7 +957,7 @@ export function ArtifactPanel({
         </div>
 
         {/* 产物切换区 */}
-        {artifacts.length > 0 && (
+        {visibleArtifacts.length > 0 && (
           <div className="shrink-0 border-b border-surface-100 bg-white/80 px-3 py-2">
             <div className="flex gap-2 overflow-x-auto pb-1">
               {artifactTurnGroups.map((group) =>
@@ -1069,7 +1070,7 @@ export function ArtifactPanel({
         </div>
       </div>
 
-      {artifacts.length > 0 && (
+      {visibleArtifacts.length > 0 && (
         <div className="shrink-0 border-b border-surface-100 bg-white/80">
           {/* 收起态：紧凑一条（当前产物 + 数量 + 展开按钮），预览区优先 */}
           <button
@@ -1083,7 +1084,7 @@ export function ArtifactPanel({
               {activeArtifactTurn ? `${activeArtifactTurn.title} · ` : ''}{activeArtifact?.title || '已生成产物'}
             </span>
             <span className="shrink-0 rounded-full bg-surface-100 px-2 py-0.5 text-[10px] text-surface-400">
-              {artifacts.length} 个产物
+              {visibleArtifacts.length} 个产物
             </span>
           </button>
 

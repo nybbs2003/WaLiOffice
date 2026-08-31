@@ -5,7 +5,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::json;
 use std::time::Duration;
 
-use crate::agent::tool::{OfficeTool, ToolArtifact, ToolContext, ToolResult};
+use crate::agent::tool::{OfficeTool, ToolContext, ToolResult};
 use crate::models::SearchProvidersConfig;
 
 pub struct WebSearchTool;
@@ -96,7 +96,7 @@ impl OfficeTool for WebSearchTool {
     }
 
     fn produces_artifact(&self) -> bool {
-        true
+        false
     }
 
     async fn call(&self, input: serde_json::Value, ctx: &ToolContext) -> ToolResult {
@@ -129,18 +129,6 @@ impl OfficeTool for WebSearchTool {
                     )).collect::<Vec<_>>().join("\n");
                     format!("已完成联网检索，关键词“{query}”的结果如下：\n{lines}")
                 };
-                let search_artifact = ToolArtifact {
-                    kind: "search".into(),
-                    title: format!("搜索结果 · {query}"),
-                    content: json!({
-                        "type": "search_results",
-                        "query": query,
-                        "provider": outcome.provider.as_str(),
-                        "provider_label": provider_label,
-                        "providers_tried": providers_tried,
-                        "results": outcome.items,
-                    }),
-                };
                 ToolResult {
                     success: true,
                     data: Some(json!({
@@ -151,7 +139,8 @@ impl OfficeTool for WebSearchTool {
                         "results": outcome.items,
                     })),
                     error: None,
-                    artifacts: Some(vec![search_artifact]),
+                    // 搜索结果只进对话正文，不生成产物（不弹右边栏、不进「我的文件」）
+                    artifacts: None,
                     observation,
                     needs_auth: None,
                     continue_loop: None,
