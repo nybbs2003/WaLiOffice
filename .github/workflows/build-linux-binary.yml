@@ -1,0 +1,51 @@
+name: build-linux-binary
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths:
+      - 'server/**'
+      - 'frontend/**'
+      - '.github/workflows/build-linux-binary.yml'
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Build frontend
+        working-directory: frontend
+        run: |
+          npm config set registry https://registry.npmmirror.com
+          npm ci
+          npm run build
+
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache cargo
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            server/target
+          key: cargo-${{ runner.os }}-${{ hashFiles('server/Cargo.lock') }}
+
+      - name: Build server (release)
+        working-directory: server
+        run: cargo build --release
+
+      - name: Upload binary
+        uses: actions/upload-artifact@v4
+        with:
+          name: walioffice-linux-amd64
+          path: server/target/release/walioffice
+          retention-days: 7
