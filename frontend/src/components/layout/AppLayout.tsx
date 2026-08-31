@@ -24,7 +24,8 @@ export function AppLayout() {
 
   const handleLogout = () => {
     logout()
-    navigate('/login')
+    // 清除会话 Cookie（后端 302 回登录页）
+    window.location.href = '/api/auth/logout'
   }
 
   return (

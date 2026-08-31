@@ -1,5 +1,5 @@
 use axum::http::header::{HeaderMap, HeaderValue, AUTHORIZATION, COOKIE, SET_COOKIE};
-use axum::response::IntoResponse;
+use axum::response::{IntoResponse, Redirect};
 use axum::routing::{any, get, post};
 use axum::{Json, Router};
 use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine as _};
@@ -25,6 +25,7 @@ pub fn router() -> Router {
         .route("/api/auth/me", get(me))
         .route("/api/auth/session-token", get(session_token))
         .route("/api/auth/session-check", any(session_check))
+        .route("/api/auth/logout", get(logout))
 }
 
 /// 登录成功响应：签发 JWT 同时写入 HttpOnly 会话 Cookie（wa_session），
@@ -115,6 +116,22 @@ async fn session_check(headers: HeaderMap) -> axum::response::Response {
             .body(axum::body::Body::from("unauthorized"))
             .unwrap()
     }
+}
+
+/// 登出：清除会话 Cookie 后 302 回登录页（与登录时属性一致才能删除）。
+async fn logout() -> axum::response::Response {
+    let secure = std::env::var("AIPPT_COOKIE_SECURE")
+        .map(|v| v == "true" || v == "1")
+        .unwrap_or(false);
+    let mut headers = HeaderMap::new();
+    let value = format!(
+        "wa_session=; Path=/; HttpOnly; SameSite=Lax; Max-Age=0{}",
+        if secure { "; Secure" } else { "" }
+    );
+    if let Ok(value) = HeaderValue::from_str(&value) {
+        headers.insert(SET_COOKIE, value);
+    }
+    (headers, Redirect::temporary("/login")).into_response()
 }
 
 async fn login(Json(req): Json<LoginRequest>) -> Result<axum::response::Response, AppError> {
