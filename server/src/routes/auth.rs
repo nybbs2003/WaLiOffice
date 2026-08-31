@@ -118,6 +118,9 @@ async fn session_check(headers: HeaderMap) -> axum::response::Response {
 }
 
 async fn login(Json(req): Json<LoginRequest>) -> Result<axum::response::Response, AppError> {
+    if crate::config::config().feishu_only {
+        return Err(AppError::Forbidden);
+    }
     let pool = state::db_pool();
     let (user, hash) = user_repo::find_by_username(&pool, &req.username)
         .await?
@@ -149,6 +152,9 @@ async fn verification_login(
 async fn login_with_verification(
     req: VerificationLoginRequest,
 ) -> Result<axum::response::Response, AppError> {
+    if crate::config::config().feishu_only {
+        return Err(AppError::Forbidden);
+    }
     let code = req.code.trim();
     if code.is_empty() {
         return Err(AppError::BadRequest("请输入验证码".into()));
@@ -197,6 +203,9 @@ fn extract_openid_from_x_api_token(token: &str) -> Option<String> {
 }
 
 async fn register(Json(req): Json<RegisterRequest>) -> Result<axum::response::Response, AppError> {
+    if crate::config::config().feishu_only {
+        return Err(AppError::Forbidden);
+    }
     if req.username.len() < 3 {
         return Err(AppError::BadRequest("用户名至少 3 个字符".into()));
     }
@@ -246,6 +255,9 @@ async fn me(user: AuthUser) -> Result<Json<crate::models::User>, AppError> {
 async fn register_by_invite(
     Json(req): Json<InviteRequest>,
 ) -> Result<axum::response::Response, AppError> {
+    if crate::config::config().feishu_only {
+        return Err(AppError::Forbidden);
+    }
     if req.username.len() < 3 {
         return Err(AppError::BadRequest("用户名至少 3 个字符".into()));
     }

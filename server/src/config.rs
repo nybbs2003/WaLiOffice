@@ -55,6 +55,9 @@ pub struct Config {
 
     // 开放注册开关（单实例多用户场景可关自动注册，走邀请制）
     pub allow_register: bool,
+
+    // 仅飞书登录（其余登录方式后端直接拒绝）
+    pub feishu_only: bool,
 }
 
 impl Config {
@@ -200,6 +203,7 @@ impl Config {
             feishu_redirect_uri: env_or("FEISHU_REDIRECT_URI", ""),
 
             allow_register: env_or("ALLOW_REGISTER", "true").parse().unwrap_or(true),
+            feishu_only: env_or("AIPPT_FEISHU_ONLY", "false").parse().unwrap_or(false),
         })
     }
 
