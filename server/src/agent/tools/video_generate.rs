@@ -898,7 +898,10 @@ impl OfficeTool for VideoGenerateTool {
         // 使用 id 作为查询标识（按厂商分派查询端点）
         let video_task_id = create_response.id.clone();
         let poll_url = credentials.video_query_endpoint(&video_task_id);
-        let deadline = Instant::now() + Duration::from_secs(480);
+        // 火山 v3（含自建本地适配层）生视频耗时可达 10-30 分钟，轮询截止放宽到 30 分钟；
+        // Agnes / 智谱保持 8 分钟
+        let poll_timeout_secs: u64 = if is_volc { 1800 } else { 480 };
+        let deadline = Instant::now() + Duration::from_secs(poll_timeout_secs);
         let mut latest_progress = create_response.progress.unwrap_or(0);
 
         // ---- 轮询任务状态 ----

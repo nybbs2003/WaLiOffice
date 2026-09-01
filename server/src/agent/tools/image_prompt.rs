@@ -438,7 +438,8 @@ impl OfficeTool for ImagePromptTool {
         let image_model = image_model_with_override(&ctx.user_id, ctx.get_config::<String>("model").as_deref()).await;
         let endpoint = credentials.endpoint("images/generations");
         let is_volc = credentials.video_vendor() == crate::agent::tools::agnes_media::VideoVendor::Volcengine;
-        let client = match http_client(Duration::from_secs(240)) {
+        // 本地适配层生图耗时 2-5 分钟，客户端超时放宽到 10 分钟
+        let client = match http_client(Duration::from_secs(600)) {
             Ok(client) => client,
             Err(err) => return ToolResult::err(format!("初始化图像客户端失败: {err}")),
         };
