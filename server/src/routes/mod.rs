@@ -1,3 +1,4 @@
+pub mod audio;
 pub mod auth;
 pub mod chat;
 pub mod dashboard;
@@ -28,6 +29,7 @@ pub fn build_router() -> Router {
 
     Router::new()
         .merge(auth::router())
+        .merge(audio::router())
         .merge(chat::router())
         .merge(session::router())
         .merge(project::router())

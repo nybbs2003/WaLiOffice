@@ -99,6 +99,11 @@ export const projectApi = {
 };
 
 // ===== 设置 API =====
+export const audioApi = {
+  uploadRecording: (payload: { filename: string; wav_b64: string; duration: number; nas_out?: string }) =>
+    api.post<{ ok: boolean; nas_path: string | null; text: string | null; message: string }>('/audio/recordings', payload),
+}
+
 export const settingsApi = {
   getSettings: () => api.get<AppSettings>('/settings'),
   saveSettings: (payload: AppSettings) => api.put<AppSettings>('/settings', payload),

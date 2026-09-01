@@ -6,6 +6,7 @@ pub mod feishu_tools;
 pub mod nas_tools;
 pub mod image_prompt;
 pub mod local_video;
+pub mod meeting_minutes;
 pub mod md_generate;
 pub mod ppt_generate;
 pub mod ppt_plan;
@@ -51,6 +52,9 @@ pub async fn register_all_tools() {
         .register(Arc::new(video_storyboard::VideoStoryboardTool))
         .await;
     REGISTRY.register(Arc::new(web_search_generic::WebSearchTool)).await;
+    REGISTRY
+        .register(Arc::new(meeting_minutes::MeetingMinutesTool))
+        .await;
     REGISTRY.register(Arc::new(feishu_tools::FeishuDocReadTool)).await;
     REGISTRY.register(Arc::new(feishu_tools::FeishuDocCreateTool)).await;
     REGISTRY.register(Arc::new(feishu_tools::FeishuBitableQueryTool)).await;

@@ -96,6 +96,63 @@ pub async fn enabled_nas_sources(user_id: &str) -> Vec<NasConfig> {
     out
 }
 
+/// 供路由层使用：把二进制内容写入用户的第一个可用数据源（自动直连/中继路由）。
+pub async fn write_file_for_user(user_id: &str, rel_path: &str, bytes: &[u8]) -> anyhow::Result<String> {
+    let sources = enabled_nas_sources(user_id).await;
+    if sources.is_empty() {
+        return Err(anyhow::anyhow!("尚未配置 WebDAV 数据源"));
+    }
+    // 依次尝试每个源（直连失败自动降级中继由 dav_write 内部处理）
+    let mut last_err = None;
+    for cfg in &sources {
+        let content = String::from_utf8_lossy(bytes).to_string();
+        match dav_write(cfg, rel_path, &content).await {
+            Ok(()) => return Ok(format!("{}:{rel_path}", if cfg.name.is_empty() { cfg.base_url.clone() } else { cfg.name.clone() })),
+            Err(e) => last_err = Some(e),
+        }
+    }
+    Err(last_err.unwrap_or_else(|| anyhow::anyhow!("WebDAV 写入失败")))
+}
+
+/// 供路由层使用：从用户数据源读取二进制文件（自动直连/中继路由）。
+pub async fn read_file_for_user(user_id: &str, rel_path: &str) -> anyhow::Result<Vec<u8>> {
+    let sources = enabled_nas_sources(user_id).await;
+    if sources.is_empty() {
+        return Err(anyhow::anyhow!("尚未配置 WebDAV 数据源"));
+    }
+    let mut last_err = None;
+    for cfg in &sources {
+        match dav_read(cfg, rel_path).await {
+            Ok((text, _ctype)) => return Ok(text.into_bytes()),
+            Err(e) => last_err = Some(e),
+        }
+    }
+    Err(last_err.unwrap_or_else(|| anyhow::anyhow!("WebDAV 读取失败")))
+}
+
+/// 供路由层使用：把 WAV 字节交给局域网 worker 做本地转写（faster-whisper）。
+/// 音频数据经 frp 控制通道传到 spark，不经过任何第三方服务。
+pub async fn relay_transcribe(wav: &[u8]) -> anyhow::Result<String> {
+    let client = reqwest::Client::builder()
+        .timeout(std::time::Duration::from_secs(1200))
+        .build()?;
+    let resp = client
+        .post(format!("{}/transcribe", relay_worker_url().trim_end_matches('/')))
+        .header("Authorization", format!("Bearer {}", relay_worker_key()))
+        .body(wav.to_vec())
+        .send()
+        .await?;
+    let status = resp.status().as_u16();
+    let body = resp.text().await.unwrap_or_default();
+    if status != 200 {
+        return Err(anyhow::anyhow!("worker 转写失败（HTTP {status}）：{}", body.chars().take(300).collect::<String>()));
+    }
+    let j: serde_json::Value = serde_json::from_str(&body).map_err(|e| anyhow::anyhow!("worker 响应解析失败: {e}"))?;
+    j.get("text").and_then(|v| v.as_str()).map(|s| s.to_string())
+        .filter(|s| !s.is_empty())
+        .ok_or_else(|| anyhow::anyhow!("转写结果为空"))
+}
+
 /// 按名称或顺序取一个数据源（工具支持 nas_source 参数指定，缺省用第一个启用源）
 async fn resolve_nas_source(ctx: &ToolContext, source_name: &str) -> anyhow::Result<NasConfig> {
     let sources = enabled_nas_sources(&ctx.user_id).await;
