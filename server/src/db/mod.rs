@@ -40,6 +40,8 @@ pub async fn init_pool(database_url: &str, data_dir: &str, max_connections: u32)
             .max_connections(max_connections)
             .connect(database_url)
             .await?;
+        // 加大写锁等待：避免并发写（如脚本/多请求）瞬间把登录等请求打成「数据库错误」
+        let _ = sqlx::raw_sql("PRAGMA busy_timeout = 15000").execute(&sqlite_pool).await;
         run_migrations_sqlite(&sqlite_pool).await?;
         info!("📦 SQLite 数据库已初始化: {}", database_url);
 

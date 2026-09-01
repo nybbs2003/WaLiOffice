@@ -375,15 +375,15 @@ async fn feishu_login(
     // 3. 按 open_id 找或建用户（username 形如 feishu_{open_id}）
     let pool = state::db_pool();
     let username = format!("feishu_{open_id}");
-    let user = match user_repo::find_by_username(&pool, &username).await? {
-        Some((user, _)) => {
-            // 已存在：登录时刷新飞书昵称 + 头像
-            match user_repo::update_profile(&pool, &user.id, Some(&name), avatar.as_deref()).await? {
-                Some(updated) => updated,
-                None => user,
+    let user = match user_repo::find_by_username(&pool, &username).await {
+        Ok(Some((user, _))) => {
+            // 已存在：登录时刷新飞书昵称 + 头像（失败不阻断登录，仅记日志）
+            if let Err(e) = user_repo::update_profile(&pool, &user.id, Some(&name), avatar.as_deref()).await {
+                tracing::error!("[Feishu] update_profile 失败: {e:#}");
             }
+            user
         }
-        None => {
+        Ok(None) => {
             // 新建：若带 tenant_id 则归属该租户；否则自动建个人租户
             let hash = user_repo::hash_password(&uuid::Uuid::new_v4().to_string())?;
             if let Some(tenant_id) = req.tenant_id.as_deref() {
@@ -398,6 +398,10 @@ async fn feishu_login(
                     user_repo::create_with_profile(&pool, &username, None, &hash, Some(&tenant.id), "tenant_admin", Some(&name), avatar.as_deref()).await?
                 }
             }
+        }
+        Err(e) => {
+            tracing::error!("[Feishu] find_by_username 失败: {e:#}");
+            return Err(e);
         }
     };
 
