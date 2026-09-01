@@ -9,7 +9,7 @@ const LOGO_URL = '/logo.png'
 const NAV_ITEMS = [
   { to: '/office', label: '智能助手', icon: Sparkles, end: false },
   { to: '/files', label: '我的文件', icon: Files },
-  { to: 'https://github.com/fuzhengwei/WaLiOffice', label: '开源项目', icon: Github, external: true },
+  { to: 'https://github.com/fuzhengwei/Moe Office', label: '开源项目', icon: Github, external: true },
 ]
 
 export function AppLayout() {
@@ -41,10 +41,10 @@ export function AppLayout() {
               className="flex items-center gap-3 rounded-full px-1 py-1 text-left transition hover:bg-white/40"
             >
               <div className="flex h-10 w-10 items-center justify-center overflow-hidden rounded-2xl bg-white shadow-sm ring-1 ring-black/[0.06]">
-                <img src={LOGO_URL} alt="WaLiOffice logo" className="h-full w-full object-cover" />
+                <img src={LOGO_URL} alt="Moe Office logo" className="h-full w-full object-cover" />
               </div>
               <div className="min-w-0">
-                <div className="text-sm font-black tracking-tight text-surface-950">WaLiOffice</div>
+                <div className="text-sm font-black tracking-tight text-surface-950">Moe Office</div>
                 <div className="text-[11px] text-surface-500">打开即用，专注办公创作</div>
               </div>
             </button>
@@ -100,7 +100,7 @@ export function AppLayout() {
                 </div>
                 <div className="min-w-0">
                   <div className="max-w-[140px] truncate text-sm font-semibold text-surface-900">{user?.username}</div>
-                  <div className="max-w-[140px] truncate text-[11px] text-surface-500">{user?.email || 'WaLiOffice 用户'}</div>
+                  <div className="max-w-[140px] truncate text-[11px] text-surface-500">{user?.email || 'Moe Office 用户'}</div>
                 </div>
               </div>
               <button

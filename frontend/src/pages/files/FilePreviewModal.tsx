@@ -277,7 +277,7 @@ function DocStructuredPreview({ data }: { data: any }) {
 
         {/* 页脚 */}
         <div className="mt-12 pt-4 text-center text-[11px] text-gray-400" style={{ borderTop: '1px solid #e5e7eb' }}>
-          — WaLiOffice 文档预览 · 下载获取完整排版 —
+          — Moe Office 文档预览 · 下载获取完整排版 —
         </div>
       </div>
     </div>

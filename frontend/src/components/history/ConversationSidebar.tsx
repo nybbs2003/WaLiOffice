@@ -230,7 +230,7 @@ export function ConversationSidebar({
   const workspaceLinks = [
     { to: '/', label: '智能助手', icon: Sparkles, active: location.pathname === '/' },
     { to: '/files', label: '我的文件', icon: Folder, active: location.pathname.startsWith('/files') },
-    { to: 'https://github.com/fuzhengwei/WaLiOffice', label: '开源项目', icon: Github, active: false, external: true },
+    { to: 'https://github.com/fuzhengwei/Moe Office', label: '开源项目', icon: Github, active: false, external: true },
   ]
 
   const toggleProject = (id: string) => {
@@ -447,10 +447,10 @@ export function ConversationSidebar({
       <div className="border-b border-black/[0.04] bg-[#fbf8f1]/68 px-5 pb-5 pt-6 shadow-[0_1px_0_rgba(255,255,255,0.75)_inset]">
         <div className="mb-5 flex items-center gap-3">
           <div className="flex h-10 w-10 items-center justify-center overflow-hidden rounded-2xl bg-white text-surface-900 shadow-sm ring-1 ring-black/[0.06]">
-            <img src={LOGO_URL} alt="WaLiOffice logo" className="h-full w-full object-cover" />
+            <img src={LOGO_URL} alt="Moe Office logo" className="h-full w-full object-cover" />
           </div>
           <div className="min-w-0 flex-1">
-            <div className="truncate text-base font-black tracking-tight text-surface-950">WaLiOffice</div>
+            <div className="truncate text-base font-black tracking-tight text-surface-950">Moe Office</div>
             <div className="mt-0.5 truncate text-[11px] font-semibold text-surface-400">办公创作空间</div>
           </div>
           {/* 移动端关闭按钮 */}

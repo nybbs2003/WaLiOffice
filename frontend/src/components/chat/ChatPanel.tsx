@@ -7,7 +7,7 @@ import { AlertCircle, Check, Circle, Download, Eye, Files, Loader2, Send, Sparkl
 import { AGENT_TOOLS, getAgentTool } from '@/config/agent-tools'
 import { useRef, useState, useEffect, Fragment, useMemo } from 'react'
 import { FilePickerPanel } from './FilePickerPanel'
-import type { AgentTraceEvent, Artifact, ChatAttachment, ChatMessage, InputRef, LLMProfile, PPTProject, ToolConfigOption, ToolKind, ToolConfigMap } from '@/types'
+import type { AgentTraceEvent, Artifact, ChatAttachment, ChatMessage, InputRef, LLMProfile, ModelOptionSet, PPTProject, ToolKind, ToolConfigMap } from '@/types'
 import { findArtifactTurnGroup, groupArtifactsByTurn } from '@/lib/artifact-turns'
 import { ToolConfigDropdown } from './ToolConfigDropdown'
 
@@ -28,9 +28,9 @@ interface ChatPanelProps {
   artifacts: Artifact[]
   activeArtifactId: string | null
   toolConfig: ToolConfigMap
-  /** 图片/视频模型的动态选项（来自用户多媒体配置，用于工具配置里的模型选择） */
-  imageModelOptions?: ToolConfigOption['options']
-  videoModelOptions?: ToolConfigOption['options']
+  /** 图片/视频模型的动态选项（来自用户多媒体配置，用于工具配置里的模型下拉） */
+  imageModelOptions?: ModelOptionSet
+  videoModelOptions?: ModelOptionSet
   onProjectChange: (projectId: string | null) => void
   onNewProject?: () => void
   onModelChange: (model: string) => void
@@ -636,7 +636,7 @@ export function ChatPanel({
               </div>
               <h1 className="text-3xl font-semibold tracking-tight text-surface-950">今天要做什么？</h1>
               <p className="mt-3 max-w-xl text-sm leading-6 text-surface-500">
-                WaLiOffice 在线智能办公 AI：先分析需求，再决策工具，最后绘制或生成产物。你可以先描述目标，也可以直接选工具开工。
+                Moe Office 在线智能办公 AI：先分析需求，再决策工具，最后绘制或生成产物。你可以先描述目标，也可以直接选工具开工。
               </p>
               <div className="mt-7 grid w-full max-w-3xl grid-cols-1 gap-3 sm:grid-cols-2">
                 {starterCards.map((card) => {

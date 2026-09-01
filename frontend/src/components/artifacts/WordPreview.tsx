@@ -162,7 +162,7 @@ export const WordPreview = memo(function WordPreview({ content, title }: WordPre
 
         {/* 页脚模拟 */}
         <div className="mt-12 pt-4 text-center text-[11px] text-gray-400" style={{ borderTop: '1px solid #e5e7eb' }}>
-          — WaLiOffice 文档预览 · 导出 DOCX 获取完整排版 —
+          — Moe Office 文档预览 · 导出 DOCX 获取完整排版 —
         </div>
       </div>
     </div>

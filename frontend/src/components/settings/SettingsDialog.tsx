@@ -1,4 +1,4 @@
-import { Check, KeyRound, Plus, Trash2, X, Cpu, LayoutDashboard, Search, Loader2, HardDrive, Image as ImageIcon, Video as VideoIcon } from 'lucide-react'
+import { Check, KeyRound, Plus, Trash2, X, Cpu, Search, Loader2, HardDrive, Image as ImageIcon, Video as VideoIcon } from 'lucide-react'
 import { ModelCombobox } from './ModelCombobox'
 import { useEffect, useMemo, useState } from 'react'
 import { settingsApi } from '@/api'
@@ -87,7 +87,7 @@ const emptyMcpServer = (): MCPServiceConfig => ({
 })
 
 export function SettingsDialog({ open, settings, onClose, onSave }: SettingsDialogProps) {
-  const [section, setSection] = useState<'llm' | 'base' | 'mcp' | 'search' | 'nas' | 'image' | 'video'>('llm')
+  const [section, setSection] = useState<'llm' | 'mcp' | 'search' | 'nas' | 'image' | 'video'>('llm')
   const [draft, setDraft] = useState<AppSettings | null>(settings)
   const [saving, setSaving] = useState(false)
   const [testingMcpId, setTestingMcpId] = useState<string | null>(null)
@@ -398,7 +398,6 @@ export function SettingsDialog({ open, settings, onClose, onSave }: SettingsDial
               ['video', '视频模型', VideoIcon],
               ['search', '搜索服务', Search],
               ['nas', 'WebDAV 数据源', HardDrive],
-              ['base', '基础信息', LayoutDashboard],
               ['mcp', 'MCP 服务', KeyRound],
             ].map(([key, label, Icon]: any) => (
               <button
@@ -976,51 +975,6 @@ export function SettingsDialog({ open, settings, onClose, onSave }: SettingsDial
                     </div>
                   )
                 })}
-              </div>
-            </div>
-          )}
-
-          {section === 'base' && (
-            <div>
-              <h2 className="text-xl font-bold tracking-tight text-surface-950">基础信息</h2>
-              <p className="mt-1 text-sm text-surface-500">配置产品名称、工作区标题和默认主题。</p>
-              <div className="mt-5 grid gap-4 md:grid-cols-2">
-                <label className="block text-sm font-semibold text-surface-600">
-                  产品名称
-                  <input
-                    value={draft.basic.app_name}
-                    onChange={(event) => updateDraft({ basic: { ...draft.basic, app_name: event.target.value } })}
-                    className="mt-2 w-full rounded-2xl border border-black/10 bg-white px-3 py-2.5 text-sm outline-none focus:border-surface-500"
-                  />
-                </label>
-                <label className="block text-sm font-semibold text-surface-600">
-                  工作区标题
-                  <input
-                    value={draft.basic.workspace_title}
-                    onChange={(event) => updateDraft({ basic: { ...draft.basic, workspace_title: event.target.value } })}
-                    className="mt-2 w-full rounded-2xl border border-black/10 bg-white px-3 py-2.5 text-sm outline-none focus:border-surface-500"
-                  />
-                </label>
-                <label className="block text-sm font-semibold text-surface-600 md:col-span-2">
-                  品牌副标题
-                  <input
-                    value={draft.basic.brand_tagline}
-                    onChange={(event) => updateDraft({ basic: { ...draft.basic, brand_tagline: event.target.value } })}
-                    className="mt-2 w-full rounded-2xl border border-black/10 bg-white px-3 py-2.5 text-sm outline-none focus:border-surface-500"
-                  />
-                </label>
-                <label className="block text-sm font-semibold text-surface-600">
-                  默认主题
-                  <select
-                    value={draft.basic.default_theme}
-                    onChange={(event) => updateDraft({ basic: { ...draft.basic, default_theme: event.target.value } })}
-                    className="mt-2 w-full rounded-2xl border border-black/10 bg-white px-3 py-2.5 text-sm outline-none focus:border-surface-500"
-                  >
-                    {['default', 'business', 'tech', 'warm', 'minimal'].map((theme) => (
-                      <option key={theme} value={theme}>{theme}</option>
-                    ))}
-                  </select>
-                </label>
               </div>
             </div>
           )}

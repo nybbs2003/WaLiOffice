@@ -2,15 +2,15 @@ import { useState, useRef, useEffect } from 'react'
 import { createPortal } from 'react-dom'
 import { ChevronDown, Settings2 } from 'lucide-react'
 import { getAgentTool } from '@/config/agent-tools'
-import type { ToolKind, ToolConfigMap, ToolConfigOption } from '@/types'
+import type { ModelOptionSet, ToolKind, ToolConfigMap, ToolConfigOption } from '@/types'
 
 interface ToolConfigDropdownProps {
   activeTool: ToolKind
   toolConfig: ToolConfigMap
   onToolConfigChange: (config: ToolConfigMap) => void
   disabled?: boolean
-  /** 动态模型选项（来自用户的多媒体配置），key=model 的选项优先使用 */
-  modelOptions?: ToolConfigOption['options']
+  /** 模型下拉的动态选项（来自用户多媒体配置），key=model 时使用 */
+  modelOptions?: ModelOptionSet
 }
 
 /**
@@ -58,13 +58,15 @@ export function ToolConfigDropdown({
     return () => document.removeEventListener('keydown', handleKey)
   }, [open])
 
-  // 切换工具时自动填充默认值
+  // 切换工具时自动填充默认值（模型项默认值 = 设置里启用配置的默认模型）
   useEffect(() => {
     if (!options) return
     const defaults: ToolConfigMap = {}
     for (const opt of options) {
       if (!(opt.key in toolConfig)) {
-        defaults[opt.key] = opt.defaultValue
+        defaults[opt.key] = opt.key === 'model' && modelOptions?.defaultModel
+          ? modelOptions.defaultModel
+          : opt.defaultValue
       }
     }
     if (Object.keys(defaults).length > 0) {
@@ -77,19 +79,24 @@ export function ToolConfigDropdown({
     onToolConfigChange({ ...toolConfig, [key]: value })
   }
 
-  // 模型选项：优先动态（用户多媒体配置），否则用工具内置预设
+  // 模型选项：优先动态（用户多媒体配置的启用配置），否则用工具内置预设
   const resolveOptions = (opt: ToolConfigOption): ToolConfigOption['options'] | undefined => {
-    if (opt.key === 'model' && modelOptions && modelOptions.length > 0) {
-      return [
-        { value: '', label: '跟随设置', description: '使用设置中启用的模型服务' },
-        ...modelOptions,
-      ]
+    if (opt.key === 'model' && modelOptions && modelOptions.options.length > 0) {
+      return modelOptions.options
     }
     return opt.options
   }
 
+  // 有效默认值：模型项用设置里的默认模型
+  const effectiveDefault = (opt: ToolConfigOption): string | boolean => {
+    if (opt.key === 'model' && modelOptions?.defaultModel) {
+      return modelOptions.defaultModel
+    }
+    return opt.defaultValue
+  }
+
   const getActiveLabel = (opt: ToolConfigOption): string => {
-    const val = toolConfig[opt.key] ?? opt.defaultValue
+    const val = toolConfig[opt.key] ?? effectiveDefault(opt)
     if (opt.type === 'toggle') return val ? '开' : '关'
     const match = resolveOptions(opt)?.find((o) => o.value === val)
     return match?.label ?? String(val)
@@ -107,8 +114,8 @@ export function ToolConfigDropdown({
   // 检查是否有非默认配置
   const hasNonDefault = hasConfig
     ? options!.some((opt) => {
-        const val = toolConfig[opt.key] ?? opt.defaultValue
-        return val !== opt.defaultValue
+        const val = toolConfig[opt.key] ?? effectiveDefault(opt)
+        return val !== effectiveDefault(opt)
       })
     : false
 
@@ -186,7 +193,27 @@ export function ToolConfigDropdown({
                   {opt.label}
                 </label>
 
-                {opt.type === 'select' && (() => {
+                {opt.type === 'select' && opt.key === 'model' && (() => {
+                  // 模型项：下拉框（跟推理模型选择一致），默认值 = 设置里启用配置的默认模型
+                  const opts = resolveOptions(opt)
+                  if (!opts || opts.length === 0) return null
+                  const currentValue = toolConfig[opt.key] ?? effectiveDefault(opt)
+                  return (
+                    <select
+                      value={String(currentValue)}
+                      onChange={(event) => handleChange(opt.key, event.target.value)}
+                      className="w-full rounded-xl border border-gray-200 bg-white px-3 py-2 text-xs font-medium text-surface-800 outline-none focus:border-indigo-400 focus:ring-2 focus:ring-indigo-100"
+                    >
+                      {opts.map((option) => (
+                        <option key={option.value} value={option.value} title={option.description}>
+                          {option.label}
+                        </option>
+                      ))}
+                    </select>
+                  )
+                })()}
+
+                {opt.type === 'select' && opt.key !== 'model' && (() => {
                   const opts = resolveOptions(opt)
                   if (!opts) return null
                   return (

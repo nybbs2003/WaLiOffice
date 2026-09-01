@@ -89,7 +89,7 @@ pub fn default_settings() -> AppSettings {
         active_model: default_profile.default_model.clone(),
         basic: BasicSettings {
             app_name: cfg.app_name.clone(),
-            workspace_title: "智能办公助手".into(),
+            workspace_title: "Moe Office".into(),
             brand_tagline: "打开即用，专注办公创作".into(),
             default_theme: "default".into(),
         },
@@ -371,7 +371,7 @@ pub fn normalize_settings(mut settings: AppSettings) -> Result<AppSettings, AppE
         settings.basic.app_name = crate::config::config().app_name.clone();
     }
     if settings.basic.workspace_title.trim().is_empty() {
-        settings.basic.workspace_title = "智能办公助手".into();
+        settings.basic.workspace_title = "Moe Office".into();
     }
     if settings.basic.brand_tagline.trim().is_empty() {
         settings.basic.brand_tagline = "打开即用，专注办公创作".into();

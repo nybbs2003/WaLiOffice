@@ -85,10 +85,10 @@ export default function Login() {
     <div className="min-h-screen bg-white px-4 py-8 text-surface-900">
       <main className="mx-auto flex min-h-[calc(100vh-4rem)] w-full max-w-xl flex-col items-center justify-center text-center">
         <div className="mb-5 flex h-16 w-16 items-center justify-center overflow-hidden rounded-2xl bg-white shadow-sm ring-1 ring-black/[0.06]">
-          <img src={LOGO_URL} alt="WaLiOffice logo" className="h-full w-full object-cover" />
+          <img src={LOGO_URL} alt="Moe Office logo" className="h-full w-full object-cover" />
         </div>
 
-        <h1 className="text-4xl font-extrabold tracking-tight text-surface-900">WaLiOffice</h1>
+        <h1 className="text-4xl font-extrabold tracking-tight text-surface-900">Moe Office</h1>
         <p className="mt-4 text-lg font-semibold text-surface-700">学习AI办公、掌握AI部署、运用AI提效</p>
 
         <div className="mt-10 w-full max-w-sm space-y-4">

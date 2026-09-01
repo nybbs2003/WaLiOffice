@@ -128,6 +128,12 @@ export interface ToolConfigOption {
   defaultValue: string | boolean;
 }
 
+/** 模型下拉的动态选项集（来自用户多媒体配置）：选项 + 默认模型（设置里启用配置的默认模型） */
+export interface ModelOptionSet {
+  options: NonNullable<ToolConfigOption['options']>;
+  defaultModel: string;
+}
+
 export interface AgentToolConfig {
   id: ToolKind;
   name: string;

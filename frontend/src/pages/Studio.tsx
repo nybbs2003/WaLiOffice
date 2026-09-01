@@ -198,13 +198,14 @@ export default function Studio() {
   const [settings, setSettings] = useState<AppSettings | null>(null)
   const [selectedModel, setSelectedModel] = useState<string>('')
   const [modelProfiles, setModelProfiles] = useState<LLMProfile[]>([])
-  // 图片/视频模型动态选项：来自「启用中」的多媒体配置，供工具配置里的「模型」选项使用
+  // 图片/视频模型下拉选项：来自「启用中」的多媒体配置，默认值=该配置的默认模型（跟推理模型选择一致）
   const mediaModelOptions = useMemo(() => {
     const build = (kind: 'image' | 'video') => {
       const profiles = kind === 'image' ? (settings?.image_profiles || []) : (settings?.video_profiles || [])
       const activeId = kind === 'image' ? (settings?.active_image_profile_id || '') : (settings?.active_video_profile_id || '')
       const profile = profiles.find((item) => item.id === activeId) || profiles[0]
-      if (!profile) return []
+      const fallback: { options: { value: string; label: string; description: string }[]; defaultModel: string } = { options: [], defaultModel: '' }
+      if (!profile) return fallback
       const models = profile.models && profile.models.length > 0 ? profile.models : profile.model ? [profile.model] : []
       const seen = new Set<string>()
       const options: { value: string; label: string; description: string }[] = []
@@ -214,7 +215,8 @@ export default function Studio() {
         seen.add(m)
         options.push({ value: m, label: m, description: `${profile.name || (kind === 'image' ? '图片模型服务' : '视频模型服务')}` })
       }
-      return options
+      const defaultModel = profile.model || profile.default_model || options[0]?.value || ''
+      return { options, defaultModel }
     }
     return { image: build('image'), video: build('video') }
   }, [settings])
@@ -1925,11 +1927,11 @@ export default function Studio() {
                 <Menu className="h-5 w-5" />
               </button>
               <div className="flex h-8 w-8 shrink-0 items-center justify-center overflow-hidden rounded-2xl bg-white/70 shadow-sm ring-1 ring-black/[0.04]">
-                <img src={LOGO_URL} alt="WaLiOffice logo" className="h-full w-full object-cover" />
+                <img src={LOGO_URL} alt="Moe Office logo" className="h-full w-full object-cover" />
               </div>
               <div className="min-w-0">
                 <div className="truncate text-sm font-semibold tracking-tight text-surface-950">
-                  {settings?.basic?.workspace_title || '智能办公助手'}
+                  {settings?.basic?.workspace_title || 'Moe Office'}
                 </div>
                 <div className="hidden truncate text-[11px] text-surface-500 sm:block">
                   {settings?.basic?.brand_tagline || '分析 · 决策 · 绘制 · 流式反馈'}
