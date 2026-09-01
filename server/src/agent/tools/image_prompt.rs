@@ -10,6 +10,7 @@ use crate::llm::LlmClient;
 use crate::models::{ChatAttachment, ChatMessage};
 
 use super::agnes_media::{http_client, image_model_with_override, post_json_url, resolve_image_credentials, AgnesCredentials};
+use super::nas_tools::build_nas_credentials;
 
 pub struct ImagePromptTool;
 
@@ -276,6 +277,10 @@ impl OfficeTool for ImagePromptTool {
                     "type": "array",
                     "items": { "type": "string" },
                     "description": "NAS（懒猫网盘）中的参考图相对路径列表，本地算力模式下直接在局域网读取，不经过公网；可先用 nas_list 工具浏览"
+                },
+                "nas_out": {
+                    "type": "string",
+                    "description": "生成图片在 NAS（懒猫网盘）上的存放路径（相对网盘根目录，可带文件名）。用户指定保存位置时必须传入；未指定则存到网盘根目录"
                 }
             },
             "required": ["topic"]
@@ -328,6 +333,11 @@ impl OfficeTool for ImagePromptTool {
             .get("nas_refs")
             .and_then(|v| v.as_array())
             .map(|arr| arr.iter().filter_map(|x| x.as_str()).map(|x| x.trim().to_string()).filter(|x| !x.is_empty()).collect())
+            .unwrap_or_default();
+        let nas_out = input
+            .get("nas_out")
+            .and_then(|v| v.as_str())
+            .map(|v| v.trim().to_string())
             .unwrap_or_default();
         let image_inputs_raw = collect_image_inputs(ctx, &input);
         // 内部文件地址归一化为 base64，图生图引用不受外部签名过期影响
@@ -454,6 +464,13 @@ impl OfficeTool for ImagePromptTool {
             Err(err) => return ToolResult::err(format!("初始化图像客户端失败: {err}")),
         };
 
+        // 本地 NAS 模式的凭据（闭包外先算好，避免闭包内 await）
+        let nas_body = if credentials.base_url.contains("/api/v3/nas") {
+            build_nas_credentials(&ctx.user_id).await
+        } else {
+            None
+        };
+
         // 按厂商构建图片生成请求体。seq_max：Some(n) 表示启用组图模式（一次出 n 张）
         let build_image_body = |prompt: &str, img2img: bool, spec: ImageOutputSpec, seq_max: Option<usize>| -> serde_json::Value {
             if is_volc {
@@ -481,9 +498,15 @@ impl OfficeTool for ImagePromptTool {
                     };
                     body["image"] = image_val;
                 }
-                // 本地 NAS 模式：参考图路径直接交给局域网 worker（数据面不出局域网）
-                if !nas_refs.is_empty() && credentials.base_url.contains("/api/v3/nas") {
+                // 本地 NAS 模式：参考图路径 + 存放路径 + WebDAV 凭据直接交给局域网 worker（数据面不出局域网）
+                if credentials.base_url.contains("/api/v3/nas") {
                     body["nas_inputs"] = json!(nas_refs);
+                    if !nas_out.is_empty() {
+                        body["nas_out"] = json!(nas_out);
+                    }
+                    if let Some(nb) = nas_body.clone() {
+                        body["nas"] = nb;
+                    }
                 }
                 body
             } else if img2img {

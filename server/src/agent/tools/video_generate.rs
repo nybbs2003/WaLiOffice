@@ -8,6 +8,7 @@ use crate::agent::tool::{OfficeTool, ToolArtifact, ToolContext, ToolResult};
 use crate::llm::LlmClient;
 use crate::models::{ChatAttachment, ChatMessage};
 
+use super::nas_tools::build_nas_credentials;
 use super::agnes_media::{
     video_model_with_override, get_json, http_client, post_json, resolve_video_credentials,
 };
@@ -558,6 +559,10 @@ impl OfficeTool for VideoGenerateTool {
                     "items": { "type": "string" },
                     "description": "NAS（懒猫网盘）中的参考图相对路径列表（1-2 张，用于图生视频首尾帧），本地算力模式下直接在局域网读取；可先用 nas_list 工具浏览"
                 },
+                "nas_out": {
+                    "type": "string",
+                    "description": "生成视频在 NAS（懒猫网盘）上的存放路径（相对网盘根目录，可带文件名）。用户指定保存位置时必须传入；未指定则存到网盘根目录"
+                },
                 "video_urls": {
                     "type": "array",
                     "description": "视频参考素材列表。可为字符串 URL 或对象 {url, start_seconds, require_audio}。在 prompt 中用 <Video N> 引用，用于视频续写、风格迁移",
@@ -804,6 +809,11 @@ impl OfficeTool for VideoGenerateTool {
             .and_then(|v| v.as_array())
             .map(|arr| arr.iter().filter_map(|x| x.as_str()).map(|x| x.trim().to_string()).filter(|x| !x.is_empty()).collect())
             .unwrap_or_default();
+        let nas_out = input
+            .get("nas_out")
+            .and_then(|v| v.as_str())
+            .map(|v| v.trim().to_string())
+            .unwrap_or_default();
         // 请求体：按厂商分派（Agnes 用 prompt/seconds/aspect_ratio；火山方舟用 content 数组）
         let mut request_body = if is_volc {
             // 火山方舟 Seedance：content 数组（text + 图片参考）+ resolution + duration + ratio
@@ -818,9 +828,15 @@ impl OfficeTool for VideoGenerateTool {
                 "duration": plan.seconds,
                 "ratio": plan.aspect_ratio.clone(),
             });
-            // 本地 NAS 模式：参考图路径直接交给局域网 worker（数据面不出局域网）
-            if !nas_refs.is_empty() && credentials.base_url.contains("/api/v3/nas") {
+            // 本地 NAS 模式：参考图路径 + 存放路径 + WebDAV 凭据直接交给局域网 worker（数据面不出局域网）
+            if credentials.base_url.contains("/api/v3/nas") {
                 vb["nas_inputs"] = json!(nas_refs);
+                if !nas_out.is_empty() {
+                    vb["nas_out"] = json!(nas_out);
+                }
+                if let Some(nas_body) = build_nas_credentials(&ctx.user_id).await {
+                    vb["nas"] = nas_body;
+                }
             }
             vb
         } else {

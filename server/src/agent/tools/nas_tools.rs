@@ -8,13 +8,31 @@ use crate::models::NasConfig;
 /// macOS 系统 CA bundle 尚未收录，懒猫微服 *.heiyu.space 证书链需要它。
 const LE_NEW_ROOTS_PEM: &str = include_str!("../../../assets/le-new-roots.pem");
 
+/// 读取用户数据源配置中的 WebDAV 凭据，组装成随媒体请求传给 worker 的 JSON。
+/// 用于本地 NAS 生图/生视频：凭据随请求使用、不落盘到 spark。
+pub async fn build_nas_credentials(user_id: &str) -> Option<serde_json::Value> {
+    let pool = crate::state::db_pool();
+    let settings = crate::db::settings_repo::find_by_user(&pool, user_id).await.ok()??;
+    let cfg = settings.nas_config;
+    if !cfg.enabled || cfg.base_url.is_empty() || cfg.username.is_empty() {
+        return None;
+    }
+    Some(serde_json::json!({
+        "base": cfg.base_url,
+        "user": cfg.username,
+        "password": cfg.password,
+    }))
+}
+
 /// worker 中继模式判定：office 部署在公网（如阿里云）时，NAS 读写经局域网媒体 worker 中继，
 /// 数据面在 NAS↔spark 局域网内完成，不经过公网服务器。
 pub fn is_worker_relay(cfg: &NasConfig) -> bool {
     cfg.mode == "worker" && !cfg.worker_url.is_empty()
 }
 
-/// 经 worker 控制面发 HTTP 请求（只传小 JSON / 文件字节按需）
+/// 经 worker 控制面发 HTTP 请求。
+/// NAS 的 WebDAV 凭据来自 office 数据源配置（用户已在设置里填好），
+/// 通过请求头传给 worker 逐次使用——凭据不落盘到 spark，用完即弃。
 async fn worker_request(
     cfg: &NasConfig,
     method: &str,
@@ -26,7 +44,10 @@ async fn worker_request(
         .build()?;
     let mut req = client
         .request(reqwest::Method::from_bytes(method.as_bytes())?, url)
-        .header("Authorization", format!("Bearer {}", cfg.worker_key));
+        .header("Authorization", format!("Bearer {}", cfg.worker_key))
+        .header("X-NAS-Base", cfg.base_url.clone())
+        .header("X-NAS-User", cfg.username.clone())
+        .header("X-NAS-Pass", cfg.password.clone());
     if let Some(b) = body {
         req = req.body(b);
     }

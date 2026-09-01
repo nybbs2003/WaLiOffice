@@ -725,7 +725,7 @@ export function SettingsDialog({ open, settings, onClose, onSave }: SettingsDial
                         className="mt-2 w-full rounded-2xl border border-black/10 bg-white px-3 py-2.5 font-mono text-sm outline-none focus:border-surface-500"
                       />
                     </label>
-                    <p className="text-xs text-surface-400">NAS 的 WebDAV 账号密码由局域网 worker 持有（不经过本服务器），下方凭据留空即可。</p>
+                    <p className="text-xs text-surface-400">WebDAV 凭据使用下方填写的内容：每次请求临时传给局域网 worker 使用，不落盘到 spark，用完即弃。</p>
                   </>
                 )}
 
