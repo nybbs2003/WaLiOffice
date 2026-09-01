@@ -115,10 +115,24 @@ export default function Login() {
           {error && <div className="rounded-lg bg-red-50 px-4 py-2 text-sm text-red-600">{error}</div>}
         </div>
 
-        <p className="mt-12 text-sm font-medium leading-7 text-surface-600">
-          说明：此平台主要以学习 OpenAI 为主，请合理、合法、合规的使用相关资料！
-          <a href="https://bugstack.cn/" target="_blank" rel="noreferrer" className="ml-1 text-primary-600 underline underline-offset-2">查看用户协议</a>
-        </p>
+        <div className="mt-12 w-full max-w-lg text-left text-[13px] font-medium leading-6 text-surface-500">
+          <p>
+            Moe Office 基于开源项目
+            <a href="https://github.com/fuzhengwei/WaLiOffice" target="_blank" rel="noreferrer" className="mx-1 text-primary-600 underline underline-offset-2">WaLiOffice</a>
+            二次开发，并遵循其 MIT 开源协议（MIT License）。
+          </p>
+          <p className="mt-2">
+            WaLiOffice 由
+            <a href="https://bugstack.cn/" target="_blank" rel="noreferrer" className="mx-1 text-primary-600 underline underline-offset-2">小傅哥（fuzhengwei）</a>
+            开发并开源。MIT 协议允许任何人在保留版权声明与许可声明的前提下，自由地使用、复制、修改、合并、发布甚至销售本软件的副本，无论是否用于商业用途，软件均按「现状」提供，作者不承担任何担保责任。
+          </p>
+          <p className="mt-2">
+            本平台在 WaLiOffice 原有能力的基础上，进行了界面品牌、飞书登录、本地算力网关、多语言国际化、生图生视频适配等定制与扩展，并继续以开源精神共享。特此向原作者小傅哥与开源社区致谢。
+          </p>
+          <p className="mt-2">
+            使用本平台请合理、合法、合规，输入与生成的内容请遵守当地法律法规。
+          </p>
+        </div>
       </main>
     </div>
   )
