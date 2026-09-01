@@ -9,6 +9,33 @@ enum FeishuIdentity {
     App(String),  // tenant_access_token
 }
 
+/// 需要授权的结果：附带飞书授权链接与引导话术，让 agent 在对话里主动请用户点授权
+fn needs_auth_result(scope: &str) -> ToolResult {
+    let cfg = crate::config::config();
+    let auth_url = if cfg.feishu_app_id.is_empty() {
+        String::new()
+    } else {
+        let redirect = if cfg.feishu_redirect_uri.is_empty() {
+            "https://spark1.lab207.cn/login".to_string()
+        } else {
+            cfg.feishu_redirect_uri.clone()
+        };
+        format!(
+            "https://open.feishu.cn/open-apis/authen/v1/authorize?app_id={}&redirect_uri={}&scope={}",
+            cfg.feishu_app_id,
+            urlencoding::encode(&redirect),
+            urlencoding::encode(&format!("offline_access {scope}")),
+        )
+    };
+    let mut r = ToolResult::err_needs_auth(scope);
+    r.observation = if auth_url.is_empty() {
+        format!("此操作需要用户授权飞书权限「{scope}」。请在回复中明确请用户完成授权（应用会弹出授权窗口），授权完成后请用户回复「继续」，随后重试本工具。")
+    } else {
+        format!("此操作需要用户授权飞书权限「{scope}」。请在回复中明确告知用户：① 点击页面弹出的「去飞书授权」按钮，或直接打开授权链接：{auth_url} ；② 完成授权后回复「继续」。随后重试本工具。")
+    };
+    r
+}
+
 /// 飞书 API 权限类错误码（触发交互式授权流程：对话中引导用户授权）
 fn is_feishu_permission_code(code: i64) -> bool {
     matches!(code,
@@ -34,7 +61,7 @@ fn feishu_err_to_result(err: anyhow::Error, scope: &str) -> ToolResult {
             || s.contains("Access denied") || s.contains(" 403") || s.contains("(403")
     })();
     if permission {
-        ToolResult::err_needs_auth(scope)
+        needs_auth_result(scope)
     } else {
         ToolResult::err(s)
     }
@@ -241,7 +268,7 @@ impl OfficeTool for FeishuDocReadTool {
         // 统一解析飞书访问身份（用户 token 优先 → 应用兜底 → 需授权信号）
         let identity = match resolve_feishu_access(ctx, Some("docx:document:readonly")).await {
             Ok(id) => id,
-            Err(needs) => return ToolResult::err_needs_auth(&needs.scope),
+            Err(needs) => return needs_auth_result(&needs.scope),
         };
         let token = match &identity {
             FeishuIdentity::User(t) | FeishuIdentity::App(t) => t.clone(),
@@ -334,7 +361,7 @@ impl OfficeTool for FeishuBitableQueryTool {
         }
         let identity = match resolve_feishu_access(ctx, Some("bitable:app:readonly")).await {
             Ok(id) => id,
-            Err(needs) => return ToolResult::err_needs_auth(&needs.scope),
+            Err(needs) => return needs_auth_result(&needs.scope),
         };
         let token = match &identity {
             FeishuIdentity::User(t) | FeishuIdentity::App(t) => t.clone(),
@@ -432,7 +459,7 @@ impl OfficeTool for FeishuCalendarListTool {
         let end_time = input.get("end_time").and_then(|v| v.as_str()).unwrap_or("");
         let identity = match resolve_feishu_access(ctx, Some("calendar:calendar:read")).await {
             Ok(id) => id,
-            Err(needs) => return ToolResult::err_needs_auth(&needs.scope),
+            Err(needs) => return needs_auth_result(&needs.scope),
         };
         let token = match &identity {
             FeishuIdentity::User(t) | FeishuIdentity::App(t) => t.clone(),
@@ -546,7 +573,7 @@ impl OfficeTool for FeishuDocCreateTool {
         }
         let identity = match resolve_feishu_access(ctx, Some("docx:document:create")).await {
             Ok(id) => id,
-            Err(needs) => return ToolResult::err_needs_auth(&needs.scope),
+            Err(needs) => return needs_auth_result(&needs.scope),
         };
         let token = match &identity {
             FeishuIdentity::User(t) | FeishuIdentity::App(t) => t.clone(),
@@ -638,7 +665,7 @@ impl OfficeTool for FeishuBitableCreateRecordTool {
         }
         let identity = match resolve_feishu_access(ctx, Some("bitable:app")).await {
             Ok(id) => id,
-            Err(needs) => return ToolResult::err_needs_auth(&needs.scope),
+            Err(needs) => return needs_auth_result(&needs.scope),
         };
         let token = match &identity {
             FeishuIdentity::User(t) | FeishuIdentity::App(t) => t.clone(),
@@ -723,7 +750,7 @@ impl OfficeTool for FeishuCalendarCreateEventTool {
         }
         let identity = match resolve_feishu_access(ctx, Some("calendar:calendar.event:create")).await {
             Ok(id) => id,
-            Err(needs) => return ToolResult::err_needs_auth(&needs.scope),
+            Err(needs) => return needs_auth_result(&needs.scope),
         };
         let token = match &identity {
             FeishuIdentity::User(t) | FeishuIdentity::App(t) => t.clone(),
@@ -804,7 +831,7 @@ impl OfficeTool for FeishuDriveListTool {
         let folder_token = input.get("folder_token").and_then(|v| v.as_str()).unwrap_or("");
         let identity = match resolve_feishu_access(ctx, Some("drive:drive:readonly")).await {
             Ok(id) => id,
-            Err(needs) => return ToolResult::err_needs_auth(&needs.scope),
+            Err(needs) => return needs_auth_result(&needs.scope),
         };
         let token = match &identity {
             FeishuIdentity::User(t) | FeishuIdentity::App(t) => t.clone(),
@@ -907,7 +934,7 @@ impl OfficeTool for FeishuWikiSearchTool {
         }
         let identity = match resolve_feishu_access(ctx, Some("wiki:wiki:readonly")).await {
             Ok(id) => id,
-            Err(needs) => return ToolResult::err_needs_auth(&needs.scope),
+            Err(needs) => return needs_auth_result(&needs.scope),
         };
         let token = match &identity {
             FeishuIdentity::User(t) | FeishuIdentity::App(t) => t.clone(),
