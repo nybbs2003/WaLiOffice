@@ -130,6 +130,23 @@ pub async fn read_file_for_user(user_id: &str, rel_path: &str) -> anyhow::Result
     Err(last_err.unwrap_or_else(|| anyhow::anyhow!("WebDAV 读取失败")))
 }
 
+/// 供路由层使用：向局域网 worker 发通用控制面请求（流式会话等）。
+pub async fn relay_stream(method: &str, path: &str, body: Option<serde_json::Value>) -> anyhow::Result<(u16, String)> {
+    let client = reqwest::Client::builder()
+        .timeout(std::time::Duration::from_secs(900))
+        .build()?;
+    let mut req = client
+        .request(reqwest::Method::from_bytes(method.as_bytes())?, format!("{}{}", relay_worker_url().trim_end_matches('/'), path))
+        .header("Authorization", format!("Bearer {}", relay_worker_key()));
+    if let Some(b) = body {
+        req = req.json(&b);
+    }
+    let resp = req.send().await?;
+    let status = resp.status().as_u16();
+    let text = resp.text().await.unwrap_or_default();
+    Ok((status, text))
+}
+
 /// 供路由层使用：把 WAV 字节交给局域网 worker 做本地转写（faster-whisper）。
 /// 音频数据经 frp 控制通道传到 spark，不经过任何第三方服务。
 pub async fn relay_transcribe(wav: &[u8]) -> anyhow::Result<String> {

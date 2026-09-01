@@ -102,6 +102,14 @@ export const projectApi = {
 export const audioApi = {
   uploadRecording: (payload: { filename: string; wav_b64: string; duration: number; nas_out?: string }) =>
     api.post<{ ok: boolean; nas_path: string | null; text: string | null; message: string }>('/audio/recordings', payload),
+  streamChunk: (sid: string, payload: { b64: string; seq: number; final?: boolean }) =>
+    api.post<{ ok: boolean; buffered_sec?: number }>(`/audio/stream/${sid}/chunk`, payload),
+  streamTranscript: (sid: string) =>
+    api.get<{ text: string; version: number; transcribing: boolean; final: boolean; buffered_sec?: number }>(`/audio/stream/${sid}/transcript`),
+  streamFinish: (sid: string) =>
+    api.post<{ text: string; version: number }>(`/audio/stream/${sid}/finish`, {}),
+  streamMinutes: (sid: string, payload: { transcript: string; prev?: string }) =>
+    api.post<{ markdown: string }>(`/audio/stream/${sid}/minutes`, payload),
 }
 
 export const settingsApi = {

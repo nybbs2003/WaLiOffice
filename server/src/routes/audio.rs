@@ -4,12 +4,18 @@ use base64::Engine;
 use serde::{Deserialize, Serialize};
 
 use crate::auth::middleware::AuthUser;
+use crate::llm::LlmClient;
+use crate::models::ChatMessage;
 use crate::error::AppError;
 
 pub fn router() -> Router {
     Router::new()
         .route("/api/audio/recordings", post(create_recording))
         .route("/api/audio/transcribe", post(transcribe_existing))
+        .route("/api/audio/stream/{sid}/chunk", post(stream_chunk))
+        .route("/api/audio/stream/{sid}/transcript", axum::routing::get(stream_transcript))
+        .route("/api/audio/stream/{sid}/finish", post(stream_finish))
+        .route("/api/audio/stream/{sid}/minutes", post(stream_minutes))
 }
 
 #[derive(Debug, Deserialize)]
@@ -137,3 +143,113 @@ async fn transcribe_existing(
     Ok(Json(serde_json::json!({ "ok": true, "text": text })))
 }
 
+
+
+// ---------------- 流式录音会话（分块上传 → worker 滑窗转写 → 增量纪要） ----------------
+
+/// 分块上传：透传 worker（音频字节经 frp 控制通道，不落公网存储）
+async fn stream_chunk(
+    _user: AuthUser,
+    axum::extract::Path(sid): axum::extract::Path<String>,
+    Json(body): Json<serde_json::Value>,
+) -> Result<Json<serde_json::Value>, AppError> {
+    let (status, text) = crate::agent::tools::nas_tools::relay_stream(
+        "POST",
+        &format!("/stream/{sid}/chunk"),
+        Some(body),
+    )
+    .await
+    .map_err(|e| AppError::Internal(anyhow::anyhow!("worker 不可用：{e}")))?;
+    if status != 200 {
+        return Err(AppError::Internal(anyhow::anyhow!("worker 分块上传失败（{status}）：{}", text.chars().take(200).collect::<String>())));
+    }
+    let v: serde_json::Value = serde_json::from_str(&text).unwrap_or(serde_json::json!({ "ok": true }));
+    Ok(Json(v))
+}
+
+/// 查询实时转写（滑窗重译，含对前文的更正）
+async fn stream_transcript(
+    _user: AuthUser,
+    axum::extract::Path(sid): axum::extract::Path<String>,
+) -> Result<Json<serde_json::Value>, AppError> {
+    let (status, text) = crate::agent::tools::nas_tools::relay_stream("GET", &format!("/stream/{sid}/transcript"), None)
+        .await
+        .map_err(|e| AppError::Internal(anyhow::anyhow!("worker 不可用：{e}")))?;
+    if status != 200 {
+        return Err(AppError::Internal(anyhow::anyhow!("worker 查询失败（{status}）")));
+    }
+    let v: serde_json::Value = serde_json::from_str(&text).unwrap_or(serde_json::json!({ "text": "" }));
+    Ok(Json(v))
+}
+
+/// 录音结束：等转写收敛后返回最终文本
+async fn stream_finish(
+    _user: AuthUser,
+    axum::extract::Path(sid): axum::extract::Path<String>,
+) -> Result<Json<serde_json::Value>, AppError> {
+    let (status, text) = crate::agent::tools::nas_tools::relay_stream("POST", &format!("/stream/{sid}/finish"), Some(serde_json::json!({})))
+        .await
+        .map_err(|e| AppError::Internal(anyhow::anyhow!("worker 不可用：{e}")))?;
+    if status != 200 {
+        return Err(AppError::Internal(anyhow::anyhow!("worker 结束失败（{status}）")));
+    }
+    let v: serde_json::Value = serde_json::from_str(&text).unwrap_or(serde_json::json!({ "text": "" }));
+    Ok(Json(v))
+}
+
+#[derive(Debug, serde::Deserialize)]
+struct MinutesReq {
+    transcript: String,
+    /// 上一次的纪要（增量更新：根据后文修正上文）
+    #[serde(default)]
+    prev: String,
+}
+
+/// 实时纪要：根据当前转写（可能已更正）生成/更新会议纪要。
+/// 增量模式下要求 LLM 基于后文更新前半部分内容，输出完整新版纪要。
+async fn stream_minutes(
+    user: AuthUser,
+    axum::extract::Path(_sid): axum::extract::Path<String>,
+    Json(req): Json<MinutesReq>,
+) -> Result<Json<serde_json::Value>, AppError> {
+    let transcript = req.transcript.trim().to_string();
+    if transcript.is_empty() {
+        return Ok(Json(serde_json::json!({ "markdown": "" })));
+    }
+    let prev = req.prev.trim().to_string();
+    let system = if prev.is_empty() {
+        "你是会议纪要助手。根据实时会议转写生成结构化 Markdown 纪要：会议主题、议题与要点、结论决策、行动项（事项/负责人/截止，未提及填待定）。转写是流式的可能不完整，只基于已有内容，不要编造。"
+    } else {
+        "你是会议纪要助手。已有会议纪要，现在会议有了新的转写内容（可能包含对前文转写的更正）。请输出更新后的完整会议纪要：保留既有结构，根据新增内容补充或修改议题、结论、行动项，用后文信息修正与前文矛盾的内容。输出完整 Markdown（不是 diff）。"
+    };
+    let user_prompt = if prev.is_empty() {
+        format!("当前会议转写：
+
+{transcript}")
+    } else {
+        format!("已有会议纪要：
+
+{prev}
+
+当前完整转写（含对前文的更正）：
+
+{transcript}")
+    };
+
+    let planner = LlmClient::for_user(&user.0.id, None).await;
+    let resp = match planner
+        .chat(
+            &[
+                ChatMessage { role: "system".into(), content: system.into(), tool_calls: None, tool_call_id: None, reasoning_content: None },
+                ChatMessage { role: "user".into(), content: user_prompt, tool_calls: None, tool_call_id: None, reasoning_content: None },
+            ],
+            None,
+        )
+        .await
+    {
+        Ok(r) => r,
+        Err(e) => return Err(AppError::Internal(anyhow::anyhow!("纪要生成失败：{e}"))),
+    };
+    let markdown = resp.choices.first().and_then(|c| c.message.content.as_deref()).unwrap_or("").trim().to_string();
+    Ok(Json(serde_json::json!({ "markdown": markdown })))
+}

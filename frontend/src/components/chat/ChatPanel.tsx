@@ -9,7 +9,7 @@ import { useRef, useState, useEffect, Fragment, useMemo } from 'react'
 import { FilePickerPanel } from './FilePickerPanel'
 import type { AgentTraceEvent, Artifact, ChatAttachment, ChatMessage, InputRef, LLMProfile, ModelOptionSet, PPTProject, ToolKind, ToolConfigMap } from '@/types'
 import { findArtifactTurnGroup, groupArtifactsByTurn } from '@/lib/artifact-turns'
-import { blobToBase64, lsListRecordings, lsRemoveRecording, lsSaveRecording, startRecording, type RecordingHandles } from '@/lib/audioRecorder'
+import { useMeetingRecorder } from '@/hooks/useMeetingRecorder'
 import { audioApi } from '@/api'
 import { ToolConfigDropdown } from './ToolConfigDropdown'
 
@@ -365,119 +365,52 @@ export function ChatPanel({
   messagesEndRef,
 }: ChatPanelProps) {
   const textareaRef = useRef<HTMLTextAreaElement>(null)
-  // ---- 本地录音（Web Audio API）→ localStorage → WebDAV + 转写 ----
-  const [recordState, setRecordState] = useState<'idle' | 'recording' | 'processing'>('idle')
-  const [recordSeconds, setRecordSeconds] = useState(0)
-  const [recordError, setRecordError] = useState<string | null>(null)
-  const [pendingCount, setPendingCount] = useState(() => lsListRecordings().length)
-  const recorderRef = useRef<RecordingHandles | null>(null)
-  const recordTimerRef = useRef<number | null>(null)
-  const waveRafRef = useRef<number | null>(null)
+  // ---- 流式会议录音：边录边传边转写边纪要（断网本地暂存自动补传） ----
+  const meeting = useMeetingRecorder((transcript) => {
+    onInputChange(`请为以下会议录音生成正式会议纪要：\n\n【录音转写】\n${transcript}`)
+    onSend()
+  })
   const waveCanvasRef = useRef<HTMLCanvasElement | null>(null)
+  const waveRafRef = useRef<number | null>(null)
 
-  const uploadRecording = async (name: string, b64: string, duration: number): Promise<boolean> => {
-    try {
-      const res = await audioApi.uploadRecording({ filename: name, wav_b64: b64, duration })
-      const d = res.data
-      if (d.nas_path || d.text) {
-        lsRemoveRecording(name)
-        setPendingCount(lsListRecordings().length)
-        const text = d.text || '（转写暂不可用）'
-        onInputChange(`请为以下会议录音生成会议纪要：\n\n【录音转写】\n${text}`)
-        onSend()
-        return true
-      }
-      return false
-    } catch {
-      return false
-    }
-  }
-
-  const retryPendingRecordings = async (silent = false) => {
-    const list = lsListRecordings()
-    for (const r of list) {
-      const ok = await uploadRecording(r.name, r.b64, r.duration)
-      if (!ok) {
-        if (!silent) setRecordError(`网络不可用：${list.length} 条录音暂存本地，稍后自动重试`)
-        return
-      }
-    }
-    if (!silent && list.length > 0) setRecordError(null)
-  }
-
-  // 打开会话时尽力补传本地暂存录音
+  // 波形绘制
   useEffect(() => {
-    if (lsListRecordings().length > 0) {
-      retryPendingRecordings(true)
+    if (meeting.state.phase !== 'recording') {
+      if (waveRafRef.current) cancelAnimationFrame(waveRafRef.current)
+      return
     }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [])
-
-  const handleStartRecording = async () => {
-    if (recordState !== 'idle' || isStreaming) return
-    setRecordError(null)
-    try {
-      const handles = await startRecording()
-      recorderRef.current = handles
-      setRecordState('recording')
-      setRecordSeconds(0)
-      recordTimerRef.current = window.setInterval(() => setRecordSeconds((n) => n + 1), 1000)
-      const canvas = waveCanvasRef.current
-      if (canvas && handles.analyser) {
-        const ctx2d = canvas.getContext('2d')
-        const data = new Uint8Array(handles.analyser.fftSize)
-        const draw = () => {
-          if (!recorderRef.current || !canvas || !ctx2d) return
-          handles.analyser?.getByteTimeDomainData(data)
-          ctx2d.clearRect(0, 0, canvas.width, canvas.height)
-          ctx2d.fillStyle = '#dc2626'
-          const step = Math.floor(data.length / 48)
-          for (let i = 0; i < 48; i++) {
-            const v = (data[i * step] - 128) / 128
-            const h = Math.max(2, Math.abs(v) * canvas.height * 0.9)
-            ctx2d.fillRect(i * (canvas.width / 48), (canvas.height - h) / 2, Math.max(1, canvas.width / 48 - 1), h)
-          }
-          waveRafRef.current = requestAnimationFrame(draw)
-        }
-        draw()
+    const canvas = waveCanvasRef.current
+    if (!canvas) return
+    const ctx2d = canvas.getContext('2d')
+    const analyser = meeting.analyserRef.current
+    const data = new Uint8Array(analyser ? analyser.fftSize : 256)
+    const draw = () => {
+      if (meeting.state.phase !== 'recording' || !canvas || !ctx2d) return
+      if (analyser) analyser.getByteTimeDomainData(data)
+      else data.fill(128)
+      ctx2d.clearRect(0, 0, canvas.width, canvas.height)
+      ctx2d.fillStyle = '#dc2626'
+      const step = Math.floor(data.length / 48)
+      for (let i = 0; i < 48; i++) {
+        const v = (data[i * step] - 128) / 128
+        const h = Math.max(2, Math.abs(v) * canvas.height * 0.9)
+        ctx2d.fillRect(i * (canvas.width / 48), (canvas.height - h) / 2, Math.max(1, canvas.width / 48 - 1), h)
       }
-    } catch (err) {
-      setRecordError(`无法开始录音：${err instanceof Error ? err.message : String(err)}（需要麦克风权限）`)
+      waveRafRef.current = requestAnimationFrame(draw)
     }
-  }
-
-  const handleStopRecording = async () => {
-    if (recordState !== 'recording' || !recorderRef.current) return
-    const handles = recorderRef.current
-    recorderRef.current = null
-    setRecordState('processing')
-    if (recordTimerRef.current) window.clearInterval(recordTimerRef.current)
-    if (waveRafRef.current) cancelAnimationFrame(waveRafRef.current)
-    try {
-      const { blob, durationSec } = await handles.stop()
-      const b64 = await blobToBase64(blob)
-      const name = `会议录音_${new Date().toISOString().replace(/[:.]/g, '-')}.wav`
-      // 先存 localStorage（网不好也丢不了），再尝试上传 WebDAV + 转写
-      lsSaveRecording(name, b64, durationSec)
-      setPendingCount(lsListRecordings().length)
-      const ok = await uploadRecording(name, b64, durationSec)
-      if (!ok) {
-        setRecordError('网络不可用：录音已暂存本地（localStorage），网络恢复后自动上传到 WebDAV')
-      }
-    } catch (err) {
-      setRecordError(`录音处理失败：${err instanceof Error ? err.message : String(err)}`)
-    } finally {
-      setRecordState('idle')
+    draw()
+    return () => {
+      if (waveRafRef.current) cancelAnimationFrame(waveRafRef.current)
     }
-  }
+  }, [meeting.state.phase])
 
   const handleMicClick = () => {
-    if (recordState === 'recording') {
-      handleStopRecording()
-    } else if (recordState === 'idle' && pendingCount > 0) {
-      retryPendingRecordings()
-    } else if (recordState === 'idle') {
-      handleStartRecording()
+    if (meeting.state.phase === 'recording') {
+      meeting.stop()
+    } else if (meeting.state.phase === 'idle' && meeting.state.pendingCount > 0) {
+      meeting.retrySync()
+    } else if (meeting.state.phase === 'idle') {
+      meeting.start()
     }
   }
   const tool = getAgentTool(activeTool)
@@ -1089,35 +1022,49 @@ export function ChatPanel({
                 ))}
               </div>
             )}
-            {recordState !== 'idle' && (
-              <div className="mb-1.5 flex items-center gap-2.5 rounded-2xl border border-red-100 bg-red-50/60 px-3 py-2">
-                {recordState === 'recording' ? (
-                  <>
-                    <span className="relative flex h-2.5 w-2.5">
-                      <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-red-400 opacity-75" />
-                      <span className="relative inline-flex h-2.5 w-2.5 rounded-full bg-red-500" />
+            {meeting.state.phase !== 'idle' && (
+              <div className="mb-1.5 rounded-2xl border border-red-100 bg-red-50/60 px-3 py-2">
+                <div className="flex items-center gap-2.5">
+                  {meeting.state.phase === 'recording' ? (
+                    <>
+                      <span className="relative flex h-2.5 w-2.5">
+                        <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-red-400 opacity-75" />
+                        <span className="relative inline-flex h-2.5 w-2.5 rounded-full bg-red-500" />
+                      </span>
+                      <span className="text-xs font-semibold text-red-600">录音中 {Math.floor(meeting.state.seconds / 60)}:{String(meeting.state.seconds % 60).padStart(2, '0')}</span>
+                      <canvas ref={waveCanvasRef} width={120} height={24} className="h-6 w-[120px]" />
+                      <button
+                        type="button"
+                        onClick={handleMicClick}
+                        className="ml-auto inline-flex h-7 items-center gap-1 rounded-full bg-red-500 px-3 text-[11px] font-semibold text-white transition hover:bg-red-600"
+                      >
+                        <Square className="h-3 w-3" /> 停止
+                      </button>
+                    </>
+                  ) : (
+                    <span className="flex items-center gap-1.5 text-xs font-semibold text-surface-500">
+                      <Loader2 className="h-3 w-3 animate-spin" /> 收尾中：等待转写收敛并生成纪要…
                     </span>
-                    <span className="text-xs font-semibold text-red-600">录音中 {Math.floor(recordSeconds / 60)}:{String(recordSeconds % 60).padStart(2, '0')}</span>
-                    <canvas ref={waveCanvasRef} width={120} height={24} className="h-6 w-[120px]" />
-                    <button
-                      type="button"
-                      onClick={handleStopRecording}
-                      className="ml-auto inline-flex h-7 items-center gap-1 rounded-full bg-red-500 px-3 text-[11px] font-semibold text-white transition hover:bg-red-600"
-                    >
-                      <Square className="h-3 w-3" /> 停止并转写
-                    </button>
-                  </>
-                ) : (
-                  <span className="flex items-center gap-1.5 text-xs font-semibold text-surface-500">
-                    <Loader2 className="h-3 w-3 animate-spin" /> 正在上传并转写…
-                  </span>
+                  )}
+                </div>
+                {meeting.state.liveTranscript && (
+                  <div className="mt-1.5 max-h-24 overflow-y-auto rounded-xl bg-white/80 px-2.5 py-1.5 text-[11px] leading-relaxed text-surface-600">
+                    <span className="font-semibold text-surface-500">实时转写：</span>
+                    {meeting.state.liveTranscript}
+                  </div>
+                )}
+                {meeting.state.minutes && (
+                  <div className="mt-1.5 max-h-32 overflow-y-auto rounded-xl bg-white/80 px-2.5 py-1.5 text-[11px] leading-relaxed text-surface-700 whitespace-pre-wrap">
+                    <span className="font-semibold text-surface-500">实时纪要：</span>
+                    {meeting.state.minutes}
+                  </div>
                 )}
               </div>
             )}
-            {recordError && (
+            {meeting.state.error && (
               <div className="mb-1.5 flex items-center gap-1.5 px-1 text-[11px] text-amber-600">
                 <AlertCircle className="h-3 w-3 shrink-0" />
-                <span className="truncate">{recordError}</span>
+                <span className="truncate">{meeting.state.error}</span>
               </div>
             )}
             <div className="relative rounded-[1.3rem] border border-black/[0.05] bg-[#fcfbf8]/96 px-2.5 py-1.5 shadow-[inset_0_1px_0_rgba(255,255,255,0.85)]">
@@ -1236,14 +1183,14 @@ export function ChatPanel({
                         <button
                           type="button"
                           onClick={handleMicClick}
-                          disabled={isStreaming || recordState === 'processing'}
-                          className={`relative inline-flex h-[30px] w-[30px] items-center justify-center rounded-full transition-all hover:bg-white ${recordState === 'recording' ? 'bg-red-500 text-white hover:bg-red-500 hover:text-white' : 'text-surface-500 hover:text-surface-900'}`}
-                          title={recordState === 'recording' ? '停止录音' : pendingCount > 0 ? `上传 ${pendingCount} 条本地暂存录音` : '录音转写（会议纪要）'}
+                          disabled={isStreaming || meeting.state.phase === 'processing'}
+                          className={`relative inline-flex h-[30px] w-[30px] items-center justify-center rounded-full transition-all hover:bg-white ${meeting.state.phase === 'recording' ? 'bg-red-500 text-white hover:bg-red-500 hover:text-white' : 'text-surface-500 hover:text-surface-900'}`}
+                          title={meeting.state.phase === 'recording' ? '停止录音' : meeting.state.pendingCount > 0 ? `同步 ${meeting.state.pendingCount} 个本地暂存音频块` : '录音转写（会议纪要）'}
                         >
-                          {recordState === 'processing' ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Mic className="h-3.5 w-3.5" />}
-                          {pendingCount > 0 && recordState === 'idle' && (
+                          {meeting.state.phase === 'processing' ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Mic className="h-3.5 w-3.5" />}
+                          {meeting.state.pendingCount > 0 && meeting.state.phase === 'idle' && (
                             <span className="absolute -right-0.5 -top-0.5 flex h-3.5 min-w-[14px] items-center justify-center rounded-full bg-amber-500 px-0.5 text-[9px] font-bold text-white">
-                              {pendingCount}
+                              {meeting.state.pendingCount}
                             </span>
                           )}
                         </button>

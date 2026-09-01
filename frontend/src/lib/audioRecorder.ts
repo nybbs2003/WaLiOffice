@@ -12,9 +12,15 @@ export interface RecordingHandles {
   context: AudioContext
 }
 
+export interface RecordingOptions {
+  /** 流式分块回调：每积累约 chunkSeconds 秒音频触发一次（边录边传） */
+  onChunk?: (chunk: { blob: Blob; seq: number; offsetSec: number; durationSec: number }) => void
+  chunkSeconds?: number
+}
+
 const TARGET_RATE = 16000
 
-export async function startRecording(): Promise<RecordingHandles> {
+export async function startRecording(options: RecordingOptions = {}): Promise<RecordingHandles> {
   const stream = await navigator.mediaDevices.getUserMedia({
     audio: { echoCancellation: true, noiseSuppression: true, channelCount: 1 },
   })
@@ -36,16 +42,42 @@ export async function startRecording(): Promise<RecordingHandles> {
 
   const chunks: Float32Array[] = []
   let sourceRate = context.sampleRate
+  const chunkSamples = Math.floor((options.chunkSeconds ?? 8) * sourceRate)
+  let flushedSamples = 0
+  let seq = 0
+  let stopped = false
+
+  const flushChunk = (final: boolean) => {
+    const total = chunks.reduce((n, c) => n + c.length, 0)
+    if (total - flushedSamples < chunkSamples && !final) return
+    if (total === flushedSamples) return
+    const merged = mergeChunks(chunks)
+    const slice = merged.slice(flushedSamples)
+    flushedSamples = total
+    if (slice.length === 0) return
+    const resampled = resampleLinear(slice, sourceRate, TARGET_RATE)
+    const blob = encodeWav(resampled, TARGET_RATE)
+    seq += 1
+    options.onChunk?.({
+      blob,
+      seq,
+      offsetSec: total / sourceRate,
+      durationSec: slice.length / sourceRate,
+    })
+  }
 
   processor.onaudioprocess = (event: AudioProcessingEvent) => {
     const data = event.inputBuffer.getChannelData(0)
     chunks.push(new Float32Array(data))
+    flushChunk(false)
   }
 
   return {
     analyser,
     context,
     async stop() {
+      if (stopped) return { blob: new Blob(), durationSec: 0 }
+      stopped = true
       const durationSec = chunks.reduce((n, c) => n + c.length, 0) / sourceRate
       try {
         processor.disconnect()
@@ -55,6 +87,7 @@ export async function startRecording(): Promise<RecordingHandles> {
       } catch {
         /* 忽略清理异常 */
       }
+      flushChunk(true)
       const merged = mergeChunks(chunks)
       const resampled = resampleLinear(merged, sourceRate, TARGET_RATE)
       const blob = encodeWav(resampled, TARGET_RATE)
