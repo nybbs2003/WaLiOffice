@@ -51,14 +51,15 @@ struct ImageOutputSpec {
 /// 把配置面板的宽高比映射到具体像素尺寸 + 档位。
 fn image_spec_for_ratio(aspect_ratio: &str) -> ImageOutputSpec {
     match aspect_ratio.trim() {
-        "1:1" => ImageOutputSpec { size: "1.5K", ratio: "1:1", pixel_size: "1536x1536" },
-        "16:9" => ImageOutputSpec { size: "1.5K", ratio: "16:9", pixel_size: "2304x1296" },
-        "9:16" => ImageOutputSpec { size: "1.5K", ratio: "9:16", pixel_size: "1296x2304" },
-        "4:3" => ImageOutputSpec { size: "1.5K", ratio: "4:3", pixel_size: "1920x1440" },
-        "3:4" => ImageOutputSpec { size: "1.5K", ratio: "3:4", pixel_size: "1440x1920" },
-        "2:3" => ImageOutputSpec { size: "1.5K", ratio: "2:3", pixel_size: "1408x2112" },
-        "3:2" => ImageOutputSpec { size: "1.5K", ratio: "3:2", pixel_size: "1920x1280" },
-        _ => ImageOutputSpec { size: "1.5K", ratio: "1:1", pixel_size: "1536x1536" },
+        // Seedream 5.0 起方式2像素下限 3686400（约 3.69M），全部取达标尺寸
+        "1:1" => ImageOutputSpec { size: "2K", ratio: "1:1", pixel_size: "2048x2048" },
+        "16:9" => ImageOutputSpec { size: "2K", ratio: "16:9", pixel_size: "2560x1440" },
+        "9:16" => ImageOutputSpec { size: "2K", ratio: "9:16", pixel_size: "1440x2560" },
+        "4:3" => ImageOutputSpec { size: "2K", ratio: "4:3", pixel_size: "2304x1728" },
+        "3:4" => ImageOutputSpec { size: "2K", ratio: "3:4", pixel_size: "1728x2304" },
+        "2:3" => ImageOutputSpec { size: "2K", ratio: "2:3", pixel_size: "1600x2400" },
+        "3:2" => ImageOutputSpec { size: "2K", ratio: "3:2", pixel_size: "2400x1600" },
+        _ => ImageOutputSpec { size: "2K", ratio: "1:1", pixel_size: "2048x2048" },
     }
 }
 
@@ -451,6 +452,7 @@ impl OfficeTool for ImagePromptTool {
                     "model": image_model.as_str(),
                     "prompt": prompt,
                     "size": spec.pixel_size,
+                    "ratio": spec.ratio,
                     "response_format": "url",
                     "watermark": true,
                 });
