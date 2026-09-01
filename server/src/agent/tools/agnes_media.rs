@@ -166,7 +166,8 @@ pub enum VideoVendor {
 /// 根据 base_url 域名自动识别视频厂商
 pub fn detect_video_vendor(base_url: &str) -> VideoVendor {
     let base = base_url.trim().to_lowercase();
-    if base.contains("volces.com") || base.contains("volcengine") || base.contains("ark.cn") {
+    // /api/v3 路径视为火山 v3 协议（含自建适配层，如 https://spark1.lab207.cn/api/v3）
+    if base.contains("volces.com") || base.contains("volcengine") || base.contains("ark.cn") || base.contains("/api/v3") {
         VideoVendor::Volcengine
     } else if base.contains("bigmodel.cn") || base.contains("z.ai") || base.contains("zhipu") {
         VideoVendor::Zhipu
