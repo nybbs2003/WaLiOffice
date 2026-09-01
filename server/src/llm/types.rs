@@ -89,14 +89,22 @@ impl RequestMessage {
             }
 
             // 无 file_id：base64/URL 内联
+            // DeepSeek 官方不接受 OpenAI 专属的 detail 字段（严格校验会 400），只发 url
             if let Some(image_url) = normalize_image_url(attachment) {
-                content.push(json!({
-                    "type": "image_url",
-                    "image_url": {
-                        "url": image_url,
-                        "detail": "high",
-                    }
-                }));
+                if text_vendor == "deepseek" {
+                    content.push(json!({
+                        "type": "image_url",
+                        "image_url": { "url": image_url },
+                    }));
+                } else {
+                    content.push(json!({
+                        "type": "image_url",
+                        "image_url": {
+                            "url": image_url,
+                            "detail": "high",
+                        }
+                    }));
+                }
             }
         }
 
