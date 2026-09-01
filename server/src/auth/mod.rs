@@ -13,6 +13,11 @@ pub struct Claims {
     pub username: String,
     pub role: String,
     pub tenant_id: Option<String>,
+    /// 飞书昵称/头像（新版签发，供门户直接展示；旧 token 无此字段由门户回源兜底）
+    #[serde(skip_serializing_if = "Option::is_none", default)]
+    pub nickname: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none", default)]
+    pub avatar: Option<String>,
     pub exp: usize,
 }
 
@@ -24,6 +29,8 @@ pub fn create_token(user: &User) -> Result<String> {
         username: user.username.clone(),
         role: user.role.clone(),
         tenant_id: user.tenant_id.clone(),
+        nickname: user.nickname.clone(),
+        avatar: user.avatar.clone(),
         exp,
     };
     let token = encode(

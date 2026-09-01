@@ -101,6 +101,10 @@ export function SettingsDialog({ open, settings, onClose, onSave }: SettingsDial
   const [fetchingModelProfile, setFetchingModelProfile] = useState<string | null>(null)
   const [fetchModelError, setFetchModelError] = useState('')
   const [fetchedModelsMap, setFetchedModelsMap] = useState<Record<string, string[]>>({})
+  // 媒体（图片/视频）模型的拉取状态与缓存（key = kind:profileId）
+  const [fetchedMediaModels, setFetchedMediaModels] = useState<Record<string, string[]>>({})
+  const [fetchingMediaKey, setFetchingMediaKey] = useState<string | null>(null)
+  const [mediaFetchError, setMediaFetchError] = useState('')
 
   useEffect(() => {
     setDraft(settings)
@@ -259,6 +263,26 @@ export function SettingsDialog({ open, settings, onClose, onSave }: SettingsDial
       setFetchModelError(err.response?.data?.detail || '拉取模型列表失败')
     } finally {
       setFetchingModelProfile(null)
+    }
+  }
+
+  const fetchMediaModels = async (kind: 'image' | 'video', profile: MediaProfileConfig) => {
+    const mediaKey = kind + ':' + profile.id
+    setFetchingMediaKey(mediaKey)
+    setMediaFetchError('')
+    try {
+      const keys = getMediaKeys(profile)
+      const apiKey = keys[0] || ''
+      const { data } = await settingsApi.fetchModels(profile.base_url, apiKey)
+      if (data.models && data.models.length > 0) {
+        setFetchedMediaModels((prev) => ({ ...prev, [mediaKey]: data.models }))
+      } else {
+        setMediaFetchError('未拉取到模型，请检查 Base URL 和 API Key')
+      }
+    } catch (err: any) {
+      setMediaFetchError(err.response?.data?.detail || '拉取模型列表失败')
+    } finally {
+      setFetchingMediaKey(null)
     }
   }
 
@@ -700,6 +724,10 @@ export function SettingsDialog({ open, settings, onClose, onSave }: SettingsDial
                 </button>
               </div>
 
+              {mediaFetchError && (
+                <div className="mb-4 rounded-lg bg-red-50 px-4 py-2.5 text-sm text-red-600">{mediaFetchError}</div>
+              )}
+
               {imageProfiles.length > 0 && (
                 <div className="mb-5 rounded-[1.5rem] border border-black/[0.06] bg-[#f8f5ee]/80 p-4">
                   <label className="mb-2 block text-xs font-bold uppercase tracking-[0.14em] text-surface-500">当前启用配置</label>
@@ -714,12 +742,18 @@ export function SettingsDialog({ open, settings, onClose, onSave }: SettingsDial
                       ))}
                     </select>
                     <div className="flex items-center gap-2">
-                      <input
+                      <select
                         value={activeImageProfile?.model || ''}
-                        onChange={(event) => activeImageProfile && updateMediaProfile('image', activeImageProfile.id, { model: event.target.value, models: [event.target.value] })}
-                        placeholder="模型名"
+                        onChange={(event) => activeImageProfile && updateMediaProfile('image', activeImageProfile.id, { model: event.target.value, models: [event.target.value], default_model: event.target.value })}
                         className="min-w-0 flex-1 rounded-2xl border border-black/10 bg-white px-3 py-2.5 font-mono text-sm outline-none focus:border-surface-500"
-                      />
+                      >
+                        {(fetchedMediaModels['image:' + activeImageId] && fetchedMediaModels['image:' + activeImageId].length > 0
+                          ? fetchedMediaModels['image:' + activeImageId]
+                          : (activeImageProfile?.models && activeImageProfile.models.length > 0 ? activeImageProfile.models : [''])
+                        ).map((m) => (
+                          <option key={m} value={m}>{m}</option>
+                        ))}
+                      </select>
                       <button
                         type="button"
                         onClick={() => activeImageProfile && testMedia('image')}
@@ -799,12 +833,13 @@ export function SettingsDialog({ open, settings, onClose, onSave }: SettingsDial
                           />
                         </label>
                         <label className="block text-xs font-semibold text-surface-500">
-                          模型名
-                          <input
-                            value={profile.model || ''}
-                            onChange={(event) => updateMediaProfile('image', profile.id, { model: event.target.value, models: [event.target.value], default_model: event.target.value })}
-                            className="mt-1.5 w-full rounded-2xl border border-black/10 bg-white px-3 py-2.5 font-mono text-sm text-surface-900 outline-none focus:border-surface-500"
-                            placeholder="agnes-image-2.1-flash"
+                          <span className="mb-1.5 block">模型（点「拉取」从服务端获取真实列表，支持搜索与滚动）</span>
+                          <ModelCombobox
+                            models={profile.model ? [profile.model] : []}
+                            options={fetchedMediaModels['image:' + profile.id] || []}
+                            loading={fetchingMediaKey === 'image:' + profile.id}
+                            onChange={(models) => updateMediaProfile('image', profile.id, { model: models[0] || '', models: models.slice(0, 1), default_model: models[0] || '' })}
+                            onFetch={() => fetchMediaModels('image', profile)}
                           />
                         </label>
 
@@ -878,12 +913,18 @@ export function SettingsDialog({ open, settings, onClose, onSave }: SettingsDial
                       ))}
                     </select>
                     <div className="flex items-center gap-2">
-                      <input
+                      <select
                         value={activeVideoProfile?.model || ''}
-                        onChange={(event) => activeVideoProfile && updateMediaProfile('video', activeVideoProfile.id, { model: event.target.value, models: [event.target.value] })}
-                        placeholder="模型名"
+                        onChange={(event) => activeVideoProfile && updateMediaProfile('video', activeVideoProfile.id, { model: event.target.value, models: [event.target.value], default_model: event.target.value })}
                         className="min-w-0 flex-1 rounded-2xl border border-black/10 bg-white px-3 py-2.5 font-mono text-sm outline-none focus:border-surface-500"
-                      />
+                      >
+                        {(fetchedMediaModels['video:' + activeVideoId] && fetchedMediaModels['video:' + activeVideoId].length > 0
+                          ? fetchedMediaModels['video:' + activeVideoId]
+                          : (activeVideoProfile?.models && activeVideoProfile.models.length > 0 ? activeVideoProfile.models : [''])
+                        ).map((m) => (
+                          <option key={m} value={m}>{m}</option>
+                        ))}
+                      </select>
                       <button
                         type="button"
                         onClick={() => activeVideoProfile && testMedia('video')}
@@ -963,12 +1004,13 @@ export function SettingsDialog({ open, settings, onClose, onSave }: SettingsDial
                           />
                         </label>
                         <label className="block text-xs font-semibold text-surface-500">
-                          模型名
-                          <input
-                            value={profile.model || ''}
-                            onChange={(event) => updateMediaProfile('video', profile.id, { model: event.target.value, models: [event.target.value], default_model: event.target.value })}
-                            className="mt-1.5 w-full rounded-2xl border border-black/10 bg-white px-3 py-2.5 font-mono text-sm text-surface-900 outline-none focus:border-surface-500"
-                            placeholder="agnes-video-2.5"
+                          <span className="mb-1.5 block">模型（点「拉取」从服务端获取真实列表，支持搜索与滚动）</span>
+                          <ModelCombobox
+                            models={profile.model ? [profile.model] : []}
+                            options={fetchedMediaModels['video:' + profile.id] || []}
+                            loading={fetchingMediaKey === 'video:' + profile.id}
+                            onChange={(models) => updateMediaProfile('video', profile.id, { model: models[0] || '', models: models.slice(0, 1), default_model: models[0] || '' })}
+                            onFetch={() => fetchMediaModels('video', profile)}
                           />
                         </label>
                       </div>

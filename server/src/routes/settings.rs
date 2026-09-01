@@ -779,11 +779,23 @@ async fn fetch_models(
         .build()
         .map_err(|e| AppError::Internal(anyhow::anyhow!("构建 HTTP 客户端失败: {e}")))?;
 
-    // 兼容不同的 /models 路径：先试 {base_url}/models，再试 {base_url}/v1/models
-    let endpoints = vec![
+    // 兼容不同的 /models 路径：{base}/models → {base}/v1/models；火山方舟走 /api/v3/models
+    let is_ark = base_url.contains("volces.com") || base_url.contains("ark.cn");
+    let ark_base = if is_ark {
+        let b = base_url
+            .trim_end_matches("/images/generations")
+            .trim_end_matches("/contents/generations/tasks");
+        if b.contains("/api/v3") { b.to_string() } else { format!("{b}/api/v3") }
+    } else {
+        String::new()
+    };
+    let mut endpoints = vec![
         format!("{base_url}/models"),
         format!("{base_url}/v1/models"),
     ];
+    if is_ark {
+        endpoints.push(format!("{ark_base}/models"));
+    }
 
     let mut last_err: Option<String> = None;
     let mut models: Vec<String> = Vec::new();
@@ -804,6 +816,11 @@ async fn fetch_models(
                     if let Some(arr) = json.get("data").and_then(|v| v.as_array()) {
                         for item in arr {
                             if let Some(id) = item.get("id").and_then(|v| v.as_str()) {
+                                // 火山方舟：跳过已下线（Shutdown）的模型
+                                let status = item.get("status").and_then(|v| v.as_str()).unwrap_or("");
+                                if status.eq_ignore_ascii_case("shutdown") {
+                                    continue;
+                                }
                                 if !id.is_empty() && !models.contains(&id.to_string()) {
                                     models.push(id.to_string());
                                 }
