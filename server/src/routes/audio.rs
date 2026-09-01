@@ -16,6 +16,8 @@ pub fn router() -> Router {
         .route("/api/audio/stream/{sid}/transcript", axum::routing::get(stream_transcript))
         .route("/api/audio/stream/{sid}/finish", post(stream_finish))
         .route("/api/audio/stream/{sid}/minutes", post(stream_minutes))
+        .route("/api/tts/synthesize", post(tts_synthesize))
+        .route("/api/tts/settings", axum::routing::get(tts_settings))
 }
 
 #[derive(Debug, Deserialize)]
@@ -252,4 +254,68 @@ async fn stream_minutes(
     };
     let markdown = resp.choices.first().and_then(|c| c.message.content.as_deref()).unwrap_or("").trim().to_string();
     Ok(Json(serde_json::json!({ "markdown": markdown })))
+}
+
+
+// ---------------- 语音播报（微软 Edge TTS 免费音色，本地 tts-service 封装） ----------------
+
+/// 合成语音：返回 mp3 字节。音色/语速默认取用户设置，参数可覆盖。
+async fn tts_synthesize(
+    user: AuthUser,
+    Json(body): Json<serde_json::Value>,
+) -> Result<axum::response::Response, AppError> {
+    let text = body.get("text").and_then(|v| v.as_str()).unwrap_or("").trim().to_string();
+    if text.is_empty() {
+        return Err(AppError::BadRequest("text 不能为空".into()));
+    }
+    if text.chars().count() > 2000 {
+        return Err(AppError::BadRequest("文本过长（最多 2000 字）".into()));
+    }
+    // 用户设置（无则默认晓伊）
+    let pool = crate::state::db_pool();
+    let settings = crate::db::settings_repo::find_by_user(&pool, &user.0.id)
+        .await
+        .ok()
+        .flatten()
+        .unwrap_or_else(crate::routes::settings::default_settings);
+    let voice = body.get("voice").and_then(|v| v.as_str()).map(|s| s.to_string())
+        .unwrap_or_else(|| settings.tts.voice.clone());
+    let rate = body.get("rate").and_then(|v| v.as_str()).map(|s| s.to_string())
+        .unwrap_or_else(|| settings.tts.rate.clone());
+    let pitch = body.get("pitch").and_then(|v| v.as_str()).map(|s| s.to_string())
+        .unwrap_or_else(|| settings.tts.pitch.clone());
+
+    let client = reqwest::Client::builder()
+        .timeout(std::time::Duration::from_secs(60))
+        .build()
+        .map_err(|e| AppError::Internal(anyhow::anyhow!("TTS 客户端失败: {e}")))?;
+    let resp = client
+        .post("http://127.0.0.1:8093/synthesize")
+        .json(&serde_json::json!({ "text": text, "voice": voice, "rate": rate, "pitch": pitch }))
+        .send()
+        .await
+        .map_err(|e| AppError::Internal(anyhow::anyhow!("TTS 服务不可用: {e}")))?;
+    let status = resp.status();
+    let bytes = resp.bytes().await.map_err(|e| AppError::Internal(anyhow::anyhow!("TTS 读取失败: {e}")))?;
+    if !status.is_success() {
+        let msg = String::from_utf8_lossy(&bytes).to_string();
+        return Err(AppError::Internal(anyhow::anyhow!("TTS 失败（{}）: {}", status.as_u16(), msg.chars().take(200).collect::<String>())));
+    }
+    Ok(axum::response::Response::builder()
+        .status(200)
+        .header("Content-Type", "audio/mpeg")
+        .header("Cache-Control", "public, max-age=3600")
+        .body(axum::body::Body::from(bytes.to_vec()))
+        .map_err(|e| AppError::Internal(anyhow::anyhow!("TTS 响应构建失败: {e}")))?)
+}
+
+/// 当前语音播报设置（前端开关/自动播报状态）
+async fn tts_settings(user: AuthUser) -> Result<Json<crate::models::TtsSettings>, AppError> {
+    let pool = crate::state::db_pool();
+    let settings = crate::db::settings_repo::find_by_user(&pool, &user.0.id)
+        .await
+        .ok()
+        .flatten()
+        .unwrap_or_else(crate::routes::settings::default_settings);
+    Ok(Json(settings.tts))
 }

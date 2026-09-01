@@ -69,6 +69,14 @@ export interface SearchProvidersConfig {
 }
 
 // ===== NAS（懒猫微服 WebDAV）访问凭据（每用户各自保存） =====
+export interface TtsSettings {
+  enabled: boolean;
+  auto_play: boolean;
+  voice: string;
+  rate: string;
+  pitch: string;
+}
+
 export interface NasConfig {
   name: string;
   base_url: string;
@@ -90,6 +98,7 @@ export interface AppSettings {
   search_providers?: SearchProvidersConfig;
   nas_config?: NasConfig;
   nas_configs?: NasConfig[];
+  tts?: TtsSettings;
   image_profile?: MediaProfileConfig;
   video_profile?: MediaProfileConfig;
   image_profiles?: MediaProfileConfig[];

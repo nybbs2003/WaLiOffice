@@ -1,4 +1,4 @@
-import { Check, KeyRound, Plus, Trash2, X, Cpu, Search, Loader2, HardDrive, Image as ImageIcon, Video as VideoIcon } from 'lucide-react'
+import { Check, KeyRound, Plus, Trash2, X, Cpu, Search, Loader2, HardDrive, Image as ImageIcon, Video as VideoIcon, Volume2 } from 'lucide-react'
 import { ModelCombobox } from './ModelCombobox'
 import type { ModelOptionItem } from './ModelCombobox'
 import { useEffect, useMemo, useState } from 'react'
@@ -88,7 +88,7 @@ const emptyMcpServer = (): MCPServiceConfig => ({
 })
 
 export function SettingsDialog({ open, settings, onClose, onSave }: SettingsDialogProps) {
-  const [section, setSection] = useState<'llm' | 'mcp' | 'search' | 'nas' | 'image' | 'video'>('llm')
+  const [section, setSection] = useState<'llm' | 'mcp' | 'search' | 'nas' | 'image' | 'video' | 'tts'>('llm')
   const [draft, setDraft] = useState<AppSettings | null>(settings)
   const [saving, setSaving] = useState(false)
   const [testingMcpId, setTestingMcpId] = useState<string | null>(null)
@@ -430,6 +430,7 @@ export function SettingsDialog({ open, settings, onClose, onSave }: SettingsDial
               ['search', '搜索服务', Search],
               ['nas', 'WebDAV 数据源', HardDrive],
               ['mcp', 'MCP 服务', KeyRound],
+              ['tts', '语音播报', Volume2],
             ].map(([key, label, Icon]: any) => (
               <button
                 key={key}
@@ -637,6 +638,65 @@ export function SettingsDialog({ open, settings, onClose, onSave }: SettingsDial
                 <p className="rounded-lg bg-surface-50 px-3 py-2 text-xs text-surface-400">
                   DuckDuckGo 免费无需 key；Tavily / Brave / Kimi 需要各自的 API Key。未填 key 的源会自动跳过。
                 </p>
+              </div>
+            </div>
+          )}
+
+          {section === 'tts' && (
+            <div>
+              <h2 className="text-xl font-bold tracking-tight text-surface-950">语音播报</h2>
+              <p className="mt-1 text-sm text-surface-500">使用微软 Edge TTS 免费音色（本地封装服务，不依赖外网计费）。「自动播报」开启时每条新回复自动朗读；关闭时仅通过消息上的「播报」按钮手动播放。</p>
+              <div className="mt-5 space-y-4">
+                <label className="flex items-center gap-2 text-sm font-semibold text-surface-600">
+                  <input
+                    type="checkbox"
+                    checked={draft.tts?.enabled ?? true}
+                    onChange={(event) => updateDraft({ tts: { ...(draft.tts || { enabled: true, auto_play: false, voice: 'zh-CN-XiaoyiNeural', rate: '+0%', pitch: '+0Hz' }), enabled: event.target.checked } })}
+                    className="h-4 w-4 rounded border-surface-300 text-surface-950"
+                  />
+                  启用语音播报
+                </label>
+                <label className="flex items-center gap-2 text-sm font-semibold text-surface-600">
+                  <input
+                    type="checkbox"
+                    checked={draft.tts?.auto_play ?? false}
+                    disabled={!(draft.tts?.enabled ?? true)}
+                    onChange={(event) => updateDraft({ tts: { ...(draft.tts || { enabled: true, auto_play: false, voice: 'zh-CN-XiaoyiNeural', rate: '+0%', pitch: '+0Hz' }), auto_play: event.target.checked } })}
+                    className="h-4 w-4 rounded border-surface-300 text-surface-950 disabled:opacity-40"
+                  />
+                  收到新消息立即自动播报
+                </label>
+                <p className="text-xs text-surface-400">区别说明：关闭自动播报后，智能体每条文字消息仍可通过气泡上的「播报」按钮随时转语音。</p>
+
+                <label className="block text-sm font-semibold text-surface-600">
+                  音色
+                  <select
+                    value={draft.tts?.voice || 'zh-CN-XiaoyiNeural'}
+                    onChange={(event) => updateDraft({ tts: { ...(draft.tts || { enabled: true, auto_play: false, voice: 'zh-CN-XiaoyiNeural', rate: '+0%', pitch: '+0Hz' }), voice: event.target.value } })}
+                    className="mt-2 w-full max-w-sm rounded-2xl border border-black/10 bg-white px-3 py-2.5 text-sm outline-none focus:border-surface-500"
+                  >
+                    <option value="zh-CN-XiaoyiNeural">晓伊 · 温柔女声（推荐）</option>
+                    <option value="zh-CN-XiaoxiaoNeural">晓晓 · 活泼女声</option>
+                    <option value="zh-CN-XiaomoNeural">晓墨 · 知性女声</option>
+                    <option value="zh-CN-YunxiNeural">云希 · 阳光男声</option>
+                    <option value="zh-CN-YunjianNeural">云健 · 磁性男声</option>
+                    <option value="zh-CN-HuayuNeural">华语 · 温暖男声</option>
+                  </select>
+                </label>
+
+                <label className="block text-sm font-semibold text-surface-600">
+                  语速
+                  <select
+                    value={draft.tts?.rate || '+0%'}
+                    onChange={(event) => updateDraft({ tts: { ...(draft.tts || { enabled: true, auto_play: false, voice: 'zh-CN-XiaoyiNeural', rate: '+0%', pitch: '+0Hz' }), rate: event.target.value } })}
+                    className="mt-2 w-full max-w-sm rounded-2xl border border-black/10 bg-white px-3 py-2.5 text-sm outline-none focus:border-surface-500"
+                  >
+                    <option value="-20%">稍慢</option>
+                    <option value="+0%">正常</option>
+                    <option value="+15%">稍快</option>
+                    <option value="+30%">较快</option>
+                  </select>
+                </label>
               </div>
             </div>
           )}

@@ -168,6 +168,9 @@ pub struct AppSettings {
     /// 多个 WebDAV 数据源（企业内部 NAS 或任何 WebDAV 服务，凭据有效即可）
     #[serde(default)]
     pub nas_configs: Vec<NasConfig>,
+    /// 语音播报
+    #[serde(default)]
+    pub tts: TtsSettings,
     #[serde(default)]
     pub image_profile: MediaProfileConfig,
     #[serde(default)]
@@ -239,6 +242,31 @@ pub struct NasConfig {
     #[serde(default)]
     pub enabled: bool,
 }
+
+/// 语音播报设置（微软 Edge TTS 免费音色）
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize, Default)]
+pub struct TtsSettings {
+    /// 语音总开关
+    #[serde(default = "default_true")]
+    pub enabled: bool,
+    /// 收到新消息立即自动播报（关闭则仅手动点击播放）
+    #[serde(default)]
+    pub auto_play: bool,
+    /// 音色（默认晓伊：温柔女声）
+    #[serde(default = "default_tts_voice")]
+    pub voice: String,
+    /// 语速（edge-tts 格式，如 +0%）
+    #[serde(default = "default_tts_rate")]
+    pub rate: String,
+    /// 音调（edge-tts 格式，如 +0Hz）
+    #[serde(default = "default_tts_pitch")]
+    pub pitch: String,
+}
+
+fn default_true() -> bool { true }
+fn default_tts_voice() -> String { "zh-CN-XiaoyiNeural".into() }
+fn default_tts_rate() -> String { "+0%".into() }
+fn default_tts_pitch() -> String { "+0Hz".into() }
 
 #[derive(Debug, Clone, Deserialize)]
 pub struct LoginRequest {

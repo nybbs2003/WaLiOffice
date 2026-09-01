@@ -3,13 +3,15 @@ import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
 import { Prism as SyntaxHighlighter } from 'react-syntax-highlighter'
 import { oneLight } from 'react-syntax-highlighter/dist/esm/styles/prism'
-import { AlertCircle, Check, Circle, Download, Eye, Files, Loader2, Mic, Send, Sparkles, Square, ChevronRight, ChevronDown, Terminal, Wrench, FileEdit, Sheet, PenTool, Image as ImageIcon, LayoutDashboard, Bot, Paperclip, X, Clapperboard, MessageSquarePlus } from 'lucide-react'
+import { AlertCircle, Check, Circle, Download, Eye, Files, Loader2, Mic, Send, Sparkles, Square, ChevronRight, ChevronDown, Terminal, Wrench, FileEdit, Sheet, PenTool, Image as ImageIcon, LayoutDashboard, Bot, Paperclip, Volume2, VolumeX, X, Clapperboard, MessageSquarePlus } from 'lucide-react'
 import { AGENT_TOOLS, getAgentTool } from '@/config/agent-tools'
 import { useRef, useState, useEffect, Fragment, useMemo } from 'react'
 import { FilePickerPanel } from './FilePickerPanel'
 import type { AgentTraceEvent, Artifact, ChatAttachment, ChatMessage, InputRef, LLMProfile, ModelOptionSet, PPTProject, ToolKind, ToolConfigMap } from '@/types'
 import { findArtifactTurnGroup, groupArtifactsByTurn } from '@/lib/artifact-turns'
 import { useMeetingRecorder } from '@/hooks/useMeetingRecorder'
+import { ttsApi } from '@/api'
+import type { TtsSettings } from '@/types'
 import { audioApi } from '@/api'
 import { ToolConfigDropdown } from './ToolConfigDropdown'
 
@@ -53,6 +55,7 @@ interface ChatPanelProps {
   /** 历史会话产物列表（用于 @ 引用历史产物） */
   historyArtifacts?: { artifact: Artifact; sessionTitle: string; sessionId: string }[]
   messagesEndRef: React.RefObject<HTMLDivElement>
+  ttsSettings?: TtsSettings
 }
 
 function renderMarkdown(content: string) {
@@ -363,8 +366,69 @@ export function ChatPanel({
   onExportArtifact,
   onInsertArtifact,
   messagesEndRef,
+  ttsSettings,
 }: ChatPanelProps) {
   const textareaRef = useRef<HTMLTextAreaElement>(null)
+  // ---- 语音播报（微软 Edge TTS 晓伊温柔女声；自动播报 vs 手动点击） ----
+  const audioRef = useRef<HTMLAudioElement | null>(null)
+  const [playingMsgKey, setPlayingMsgKey] = useState<string | null>(null)
+  const autoPlayedKeysRef = useRef<Set<string>>(new Set())
+
+  const playTts = async (text: string, msgKey: string) => {
+    if (!text.trim() || !ttsSettings?.enabled) return
+    try {
+      if (audioRef.current) {
+        audioRef.current.pause()
+        audioRef.current = null
+      }
+      setPlayingMsgKey(msgKey)
+      const res = await ttsApi.synthesize({ text: text.slice(0, 2000) })
+      const blob = res.data
+      const url = URL.createObjectURL(blob)
+      const audio = new Audio(url)
+      audio.onended = () => {
+        URL.revokeObjectURL(url)
+        setPlayingMsgKey((k) => (k === msgKey ? null : k))
+      }
+      audio.onerror = () => {
+        URL.revokeObjectURL(url)
+        setPlayingMsgKey((k) => (k === msgKey ? null : k))
+      }
+      audio.play().catch(() => setPlayingMsgKey((k) => (k === msgKey ? null : k)))
+      audioRef.current = audio
+    } catch {
+      setPlayingMsgKey((k) => (k === msgKey ? null : k))
+    }
+  }
+
+  const stopTts = () => {
+    if (audioRef.current) {
+      audioRef.current.pause()
+      audioRef.current = null
+    }
+    setPlayingMsgKey(null)
+  }
+
+  // 自动播报：新消息流式结束且开启自动播报时，播放最后一条 assistant 文本
+  const lastAssistantIdxRef = useRef(-1)
+  useEffect(() => {
+    const idx = messages.length - 1
+    const last = messages[idx]
+    if (!last || last.role !== 'assistant' || !last.content) return
+    if (!ttsSettings?.enabled || !ttsSettings.auto_play) return
+    if (isStreaming) {
+      lastAssistantIdxRef.current = idx
+      return
+    }
+    if (lastAssistantIdxRef.current !== idx) return
+    lastAssistantIdxRef.current = -1
+    const key = `auto-${idx}-${last.content.length}`
+    if (autoPlayedKeysRef.current.has(key)) return
+    autoPlayedKeysRef.current.add(key)
+    playTts(last.content, key)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [messages, isStreaming, ttsSettings?.enabled, ttsSettings?.auto_play])
+
   // ---- 流式会议录音：边录边传边转写边纪要（断网本地暂存自动补传） ----
   const meeting = useMeetingRecorder((transcript) => {
     onInputChange(`请为以下会议录音生成正式会议纪要：\n\n【录音转写】\n${transcript}`)
@@ -741,6 +805,35 @@ export function ChatPanel({
                     : 'border border-black/5 bg-white/78 text-surface-800 shadow-[0_12px_36px_rgba(24,24,27,0.07)] backdrop-blur'
                 }`}
               >
+                {msg.role === 'assistant' && ttsSettings?.enabled && msg.content && !isStreaming && (
+                  <div className="mb-1.5 flex items-center justify-between gap-2">
+                    <span className="text-[10px] font-medium text-surface-400">AI 回复</span>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        const key = `manual-${i}-${msg.content.length}`
+                        if (playingMsgKey === key) stopTts()
+                        else playTts(msg.content || '', key)
+                      }}
+                      className="inline-flex h-6 items-center gap-1 rounded-full border border-black/5 bg-white px-2 text-[10px] font-semibold text-surface-500 transition hover:text-surface-900 hover:bg-surface-50"
+                      title={playingMsgKey === `manual-${i}-${msg.content.length}` ? '停止播报' : '语音播报'}
+                    >
+                      {playingMsgKey === `manual-${i}-${msg.content.length}` ? (
+                        <>
+                          <VolumeX className="h-3 w-3 text-red-500" /> 停止
+                        </>
+                      ) : playingMsgKey?.startsWith('auto-') || playingMsgKey?.startsWith('manual-') ? (
+                        <>
+                          <Volume2 className="h-3 w-3 animate-pulse" /> 播报中
+                        </>
+                      ) : (
+                        <>
+                          <Volume2 className="h-3 w-3" /> 播报
+                        </>
+                      )}
+                    </button>
+                  </div>
+                )}
                 {msg.content ? (
                   msg.role === 'assistant' ? renderMarkdown(msg.content) : msg.content
                 ) : (msg.role === 'assistant' && isStreaming ? (

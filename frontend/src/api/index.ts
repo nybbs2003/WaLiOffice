@@ -1,6 +1,6 @@
 import axios from 'axios';
 import { useAuthStore } from '@/stores/auth-store';
-import type { TokenResponse, ToolKind, Artifact, PersistedSession, AppSettings, MCPServiceConfig, ChatAttachment, Tenant, User, NasConfig } from '@/types';
+import type { TokenResponse, ToolKind, Artifact, PersistedSession, AppSettings, MCPServiceConfig, ChatAttachment, Tenant, User, NasConfig, TtsSettings } from '@/types';
 
 const API_BASE = '/api';
 
@@ -110,6 +110,12 @@ export const audioApi = {
     api.post<{ text: string; version: number }>(`/audio/stream/${sid}/finish`, {}),
   streamMinutes: (sid: string, payload: { transcript: string; prev?: string }) =>
     api.post<{ markdown: string }>(`/audio/stream/${sid}/minutes`, payload),
+}
+
+export const ttsApi = {
+  synthesize: (payload: { text: string; voice?: string; rate?: string; pitch?: string }) =>
+    api.post<Blob>('/tts/synthesize', payload, { responseType: 'blob' }),
+  settings: () => api.get<TtsSettings>('/tts/settings'),
 }
 
 export const settingsApi = {

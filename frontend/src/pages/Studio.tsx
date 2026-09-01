@@ -2030,6 +2030,7 @@ export default function Studio() {
                 onExportArtifact={handleExportArtifact}
                 onInsertArtifact={handleInsertArtifactToInput}
                 messagesEndRef={messagesEndRef}
+                ttsSettings={settings?.tts}
               />
             )}
           </div>

@@ -101,6 +101,13 @@ pub fn default_settings() -> AppSettings {
         feishu_token: Default::default(),
         nas_config: Default::default(),
         nas_configs: Vec::new(),
+        tts: crate::models::TtsSettings {
+            enabled: true,
+            auto_play: false,
+            voice: "zh-CN-XiaoyiNeural".into(),
+            rate: "+0%".into(),
+            pitch: "+0Hz".into(),
+        },
         image_profile: image_profile.clone(),
         video_profile: video_profile.clone(),
         image_profiles: vec![image_profile.clone()],
