@@ -1,24 +1,43 @@
 /**
- * 本地录音（Web Audio API）：getUserMedia → AudioContext → PCM 采集 → WAV 编码。
- * 兼容所有现代浏览器（Chrome/Edge/Safari/Firefox，含 HTTPS 或 localhost 环境）。
+ * 本地录音（Web Audio API 波形 + MediaRecorder 压缩编码）：
+ * - 浏览器内置编码：优先 Opus（audio/webm），Safari 用 AAC（audio/mp4），兜底默认格式
+ * - 录音体积约为 WAV 的 1/8~1/10，网络传输与 NAS 存储均为有损压缩音频
+ * - 波形可视化仍走 Web Audio API（AnalyserNode）
  */
 
 export interface RecordingHandles {
-  /** 停止录音并得到 WAV Blob 与时长（秒） */
+  /** 停止录音（返回的 blob 为最后一块；完整数据经 onChunk 分块流出） */
   stop(): Promise<{ blob: Blob; durationSec: number }>
-  /** 波形数据（供 UI 绘制，调用 getByteTimeDomainData） */
+  /** 波形数据（供 UI 绘制） */
   analyser: AnalyserNode | null
   /** 采样上下文（录制中保持存活） */
   context: AudioContext
 }
 
 export interface RecordingOptions {
-  /** 流式分块回调：每积累约 chunkSeconds 秒音频触发一次（边录边传） */
+  /** 流式分块回调：每约 chunkSeconds 秒触发一次（边录边传） */
   onChunk?: (chunk: { blob: Blob; seq: number; offsetSec: number; durationSec: number }) => void
   chunkSeconds?: number
 }
 
-const TARGET_RATE = 16000
+function pickMimeType(): string | undefined {
+  if (typeof MediaRecorder === 'undefined') return undefined
+  const candidates = [
+    'audio/webm;codecs=opus',
+    'audio/webm',
+    'audio/mp4',
+    'audio/ogg;codecs=opus',
+    'audio/mpeg',
+  ]
+  for (const c of candidates) {
+    try {
+      if (MediaRecorder.isTypeSupported(c)) return c
+    } catch {
+      /* 继续尝试 */
+    }
+  }
+  return undefined
+}
 
 export async function startRecording(options: RecordingOptions = {}): Promise<RecordingHandles> {
   const stream = await navigator.mediaDevices.getUserMedia({
@@ -31,126 +50,55 @@ export async function startRecording(options: RecordingOptions = {}): Promise<Re
   analyser.fftSize = 256
   source.connect(analyser)
 
-  // ScriptProcessorNode：兼容性最好（现代浏览器全部支持）
-  const processor = context.createScriptProcessor(4096, 1, 1)
-  // 静音增益节点，防止监听回路啸叫
-  const mute = context.createGain()
-  mute.gain.value = 0
-  source.connect(processor)
-  processor.connect(mute)
-  mute.connect(context.destination)
+  const mimeType = pickMimeType()
+  const recorder = mimeType ? new MediaRecorder(stream, { mimeType }) : new MediaRecorder(stream)
+  const chunkSeconds = (options.chunkSeconds ?? 8) * 1000
 
-  const chunks: Float32Array[] = []
-  let sourceRate = context.sampleRate
-  const chunkSamples = Math.floor((options.chunkSeconds ?? 8) * sourceRate)
-  let flushedSamples = 0
   let seq = 0
-  let stopped = false
+  let startedAt = Date.now()
+  let finished = false
 
-  const flushChunk = (final: boolean) => {
-    const total = chunks.reduce((n, c) => n + c.length, 0)
-    if (total - flushedSamples < chunkSamples && !final) return
-    if (total === flushedSamples) return
-    const merged = mergeChunks(chunks)
-    const slice = merged.slice(flushedSamples)
-    flushedSamples = total
-    if (slice.length === 0) return
-    const resampled = resampleLinear(slice, sourceRate, TARGET_RATE)
-    const blob = encodeWav(resampled, TARGET_RATE)
+  recorder.ondataavailable = (event: BlobEvent) => {
+    if (!event.data || event.data.size === 0) return
     seq += 1
     options.onChunk?.({
-      blob,
+      blob: event.data,
       seq,
-      offsetSec: total / sourceRate,
-      durationSec: slice.length / sourceRate,
+      offsetSec: (Date.now() - startedAt) / 1000,
+      durationSec: chunkSeconds / 1000,
     })
-  }
-
-  processor.onaudioprocess = (event: AudioProcessingEvent) => {
-    const data = event.inputBuffer.getChannelData(0)
-    chunks.push(new Float32Array(data))
-    flushChunk(false)
   }
 
   return {
     analyser,
     context,
     async stop() {
-      if (stopped) return { blob: new Blob(), durationSec: 0 }
-      stopped = true
-      const durationSec = chunks.reduce((n, c) => n + c.length, 0) / sourceRate
+      if (finished) return { blob: new Blob(), durationSec: 0 }
+      finished = true
+      const durationSec = (Date.now() - startedAt) / 1000
+      const finalBlob = await new Promise<Blob>((resolve) => {
+        const onStop = () => {
+          resolve(new Blob())
+        }
+        recorder.addEventListener('stop', onStop, { once: true })
+        try {
+          recorder.stop()
+        } catch {
+          resolve(new Blob())
+        }
+      })
+      // 等待 ondataavailable 把最后一块交出（stop 触发的 dataavailable 是异步的）
+      await new Promise((r) => setTimeout(r, 80))
       try {
-        processor.disconnect()
-        mute.disconnect()
-        source.disconnect()
         stream.getTracks().forEach((t) => t.stop())
+        source.disconnect()
       } catch {
         /* 忽略清理异常 */
       }
-      flushChunk(true)
-      const merged = mergeChunks(chunks)
-      const resampled = resampleLinear(merged, sourceRate, TARGET_RATE)
-      const blob = encodeWav(resampled, TARGET_RATE)
       await context.close().catch(() => undefined)
-      return { blob, durationSec }
+      return { blob: finalBlob, durationSec }
     },
   }
-}
-
-function mergeChunks(chunks: Float32Array[]): Float32Array {
-  const total = chunks.reduce((n, c) => n + c.length, 0)
-  const out = new Float32Array(total)
-  let offset = 0
-  for (const c of chunks) {
-    out.set(c, offset)
-    offset += c.length
-  }
-  return out
-}
-
-/** 线性插值重采样 */
-function resampleLinear(input: Float32Array, fromRate: number, toRate: number): Float32Array {
-  if (fromRate === toRate) return input
-  const ratio = fromRate / toRate
-  const length = Math.floor(input.length / ratio)
-  const out = new Float32Array(length)
-  for (let i = 0; i < length; i++) {
-    const pos = i * ratio
-    const idx = Math.floor(pos)
-    const frac = pos - idx
-    const a = input[idx] ?? 0
-    const b = input[idx + 1] ?? a
-    out[i] = a + (b - a) * frac
-  }
-  return out
-}
-
-/** Float32 PCM → 16-bit 单声道 WAV */
-function encodeWav(samples: Float32Array, sampleRate: number): Blob {
-  const buffer = new ArrayBuffer(44 + samples.length * 2)
-  const view = new DataView(buffer)
-  const writeString = (offset: number, s: string) => {
-    for (let i = 0; i < s.length; i++) view.setUint8(offset + i, s.charCodeAt(i))
-  }
-  writeString(0, 'RIFF')
-  view.setUint32(4, 36 + samples.length * 2, true)
-  writeString(8, 'WAVE')
-  writeString(12, 'fmt ')
-  view.setUint32(16, 16, true)
-  view.setUint16(20, 1, true) // PCM
-  view.setUint16(22, 1, true) // mono
-  view.setUint32(24, sampleRate, true)
-  view.setUint32(28, sampleRate * 2, true)
-  view.setUint16(32, 2, true)
-  view.setUint16(34, 16, true)
-  writeString(36, 'data')
-  view.setUint32(40, samples.length * 2, true)
-  let offset = 44
-  for (let i = 0; i < samples.length; i++, offset += 2) {
-    const s = Math.max(-1, Math.min(1, samples[i]))
-    view.setInt16(offset, s < 0 ? s * 0x8000 : s * 0x7fff, true)
-  }
-  return new Blob([buffer], { type: 'audio/wav' })
 }
 
 export function blobToBase64(blob: Blob): Promise<string> {
@@ -164,7 +112,7 @@ export function blobToBase64(blob: Blob): Promise<string> {
 
 /* ---------------- localStorage 暂存队列 ---------------- */
 
-const LS_KEY = 'moe_audio_pending'
+const LS_KEY = '***'
 
 export interface PendingRecording {
   name: string
@@ -191,7 +139,6 @@ export function lsSaveRecording(name: string, b64: string, duration: number): vo
   try {
     localStorage.setItem(LS_KEY, JSON.stringify(list))
   } catch {
-    // 超出容量：丢弃最早的暂存再试一次
     const trimmed = list.slice(1)
     try {
       localStorage.setItem(LS_KEY, JSON.stringify(trimmed))
