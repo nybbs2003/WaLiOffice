@@ -197,12 +197,20 @@ fn dav_http_request(
     req.push_str("\r\n");
     req.push_str(body);
 
-    // TLS 连接（openssl）
-    let mut ssl = connect_dav_tls(&host, port)?;
-    ssl.write_all(req.as_bytes())?;
-
+    // 连接：https 走 openssl TLS；http 明文（office 与数据源同局域网时直连）
     let mut resp = Vec::new();
-    ssl.read_to_end(&mut resp)?;
+    if scheme == "https" {
+        let mut ssl = connect_dav_tls(&host, port)?;
+        ssl.write_all(req.as_bytes())?;
+        ssl.read_to_end(&mut resp)?;
+    } else {
+        use std::io::{Read, Write};
+        let mut stream = std::net::TcpStream::connect((host.as_str(), port))?;
+        stream.set_read_timeout(Some(std::time::Duration::from_secs(30)))?;
+        stream.set_write_timeout(Some(std::time::Duration::from_secs(30)))?;
+        stream.write_all(req.as_bytes())?;
+        stream.read_to_end(&mut resp)?;
+    }
     let resp_str = String::from_utf8_lossy(&resp).to_string();
 
     // 解析状态码
