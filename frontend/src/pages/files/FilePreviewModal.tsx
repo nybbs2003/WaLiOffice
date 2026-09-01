@@ -374,7 +374,8 @@ export function FilePreviewModal({ file, onClose, onPrev, onNext, onDownload }: 
     )
     if (!preview) return null
 
-    const pt = preview.preview_type
+    // 后端 preview_type 缺失时按文件名兜底推断（md/markdown/txt → markdown）
+    const pt = preview.preview_type || (file.name && /\.(md|markdown|txt)$/i.test(file.name) ? 'markdown' : preview.file_type || '')
 
     // 视频预览
     if (pt === 'video' && preview.video_url) {

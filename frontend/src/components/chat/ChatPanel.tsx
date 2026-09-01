@@ -1283,20 +1283,7 @@ export function ChatPanel({
                         >
                           <Paperclip className="h-3.5 w-3.5" />
                         </button>
-                        <button
-                          type="button"
-                          onClick={handleMicClick}
-                          disabled={isStreaming || meeting.state.phase === 'processing'}
-                          className={`relative inline-flex h-[30px] w-[30px] items-center justify-center rounded-full transition-all hover:bg-white ${meeting.state.phase === 'recording' ? 'bg-red-500 text-white hover:bg-red-500 hover:text-white' : 'text-surface-500 hover:text-surface-900'}`}
-                          title={meeting.state.phase === 'recording' ? '停止录音' : meeting.state.pendingCount > 0 ? `同步 ${meeting.state.pendingCount} 个本地暂存音频块` : '录音转写（会议纪要）'}
-                        >
-                          {meeting.state.phase === 'processing' ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Mic className="h-3.5 w-3.5" />}
-                          {meeting.state.pendingCount > 0 && meeting.state.phase === 'idle' && (
-                            <span className="absolute -right-0.5 -top-0.5 flex h-3.5 min-w-[14px] items-center justify-center rounded-full bg-amber-500 px-0.5 text-[9px] font-bold text-white">
-                              {meeting.state.pendingCount}
-                            </span>
-                          )}
-                        </button>
+
                         <button
                           onClick={onSend}
                           disabled={!canSend}
@@ -1329,6 +1316,23 @@ export function ChatPanel({
                 {item.shortName}
               </button>
             ))}
+            <button
+              type="button"
+              onClick={handleMicClick}
+              disabled={isStreaming || meeting.state.phase === 'processing'}
+              title={meeting.state.phase === 'recording' ? '停止录音' : meeting.state.pendingCount > 0 ? `同步 ${meeting.state.pendingCount} 个本地暂存音频块` : '录音转写并生成会议纪要'}
+              className={`inline-flex shrink-0 items-center gap-1.5 rounded-full border px-3 py-1.5 text-[11px] font-medium transition-all disabled:opacity-50 ${
+                meeting.state.phase === 'recording'
+                  ? 'border-red-500 bg-red-500 text-white'
+                  : 'border-black/5 bg-white/70 text-surface-600 backdrop-blur hover:bg-white hover:text-surface-900'
+              }`}
+            >
+              {meeting.state.phase === 'processing' ? <Loader2 className="h-3 w-3 animate-spin" /> : <Mic className="h-3 w-3" />}
+              会议纪要
+              {meeting.state.pendingCount > 0 && meeting.state.phase === 'idle' && (
+                <span className="rounded-full bg-amber-500 px-1.5 text-[9px] font-bold text-white">{meeting.state.pendingCount}</span>
+              )}
+            </button>
             <div className="ml-auto flex shrink-0 items-center">
               <ToolConfigDropdown
                 activeTool={activeTool}

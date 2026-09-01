@@ -670,7 +670,14 @@ export default function Studio() {
       } else {
         if (activeTabId) updateTab(activeTabId, { project: null, slides: [], currentSlideIndex: 0 })
       }
-      setShowArtifactPanel((session.artifacts || []).some((a: any) => a.kind !== 'search'))
+      const behavior = settings?.artifact_panel_behavior || 'on_artifact'
+      setShowArtifactPanel(
+        behavior === 'always'
+          ? ((session.artifacts || []).length > 0 || slides.length > 0)
+          : behavior === 'never'
+            ? false
+            : (session.artifacts || []).some((a: any) => a.kind !== 'search'),
+      )
       setFollowLatestSlide(false)
       setPptProgress(null)
       setStreamPhase('done')
@@ -1132,7 +1139,10 @@ export default function Studio() {
     if (tabId === activeTabId || !tabId) {
       if (payload.project_id) setActiveProjectId(payload.project_id)
       setActiveTool('ppt')
-      setShowArtifactPanel(true)
+      // 弹出方式按设置：always 才在生成过程中弹出；on_artifact/never 等最终产物
+      if ((settings?.artifact_panel_behavior || 'on_artifact') === 'always') {
+        setShowArtifactPanel(true)
+      }
       setProject(nextProject)
       setSlides(nextSlides)
       if (nextSlides.length === 0) {
@@ -1475,7 +1485,8 @@ export default function Studio() {
                   }
                   return { ...tab, artifacts }
                 })
-                if ((data.artifacts || []).some((item: any) => item.kind !== 'search')) {
+                const behavior = settings?.artifact_panel_behavior || 'on_artifact'
+                if (behavior === 'always' || (behavior === 'on_artifact' && (data.artifacts || []).some((item: any) => item.kind !== 'search'))) {
                   uiShowPanel(true)
                 }
               }

@@ -101,6 +101,7 @@ pub fn default_settings() -> AppSettings {
         feishu_token: Default::default(),
         nas_config: Default::default(),
         nas_configs: Vec::new(),
+        artifact_panel_behavior: "on_artifact".into(),
         tts: crate::models::TtsSettings {
             enabled: true,
             auto_play: false,

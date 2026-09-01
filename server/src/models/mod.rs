@@ -171,6 +171,9 @@ pub struct AppSettings {
     /// 语音播报
     #[serde(default)]
     pub tts: TtsSettings,
+    /// 右边栏弹出方式：never=不自动弹出 / on_artifact=有最终产物时弹出 / always=总是弹出
+    #[serde(default = "default_panel_behavior")]
+    pub artifact_panel_behavior: String,
     #[serde(default)]
     pub image_profile: MediaProfileConfig,
     #[serde(default)]
@@ -264,6 +267,7 @@ pub struct TtsSettings {
 }
 
 fn default_true() -> bool { true }
+fn default_panel_behavior() -> String { "on_artifact".into() }
 fn default_tts_voice() -> String { "zh-CN-XiaoyiNeural".into() }
 fn default_tts_rate() -> String { "+0%".into() }
 fn default_tts_pitch() -> String { "+0Hz".into() }

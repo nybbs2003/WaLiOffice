@@ -9,6 +9,37 @@ enum FeishuIdentity {
     App(String),  // tenant_access_token
 }
 
+/// 飞书 API 权限类错误码（触发交互式授权流程：对话中引导用户授权）
+fn is_feishu_permission_code(code: i64) -> bool {
+    matches!(code,
+        99991003 | // 应用未开通该权限
+        99991400 | 99991419 | // 无权限访问
+        99991661 | 99991662 | 99991663 | // scope 未授权系列
+        99991668 | 99991669 | 99991670 | 99991671 | 99991672) // 无权限/角色限制系列
+}
+
+/// API 错误 → ToolResult：权限类错误转交互式授权（needs_auth → 前端弹授权 + agent 引导用户），
+/// 其余错误保持原样，避免权限不足时 agent 沉默无回复。
+fn feishu_err_to_result(err: anyhow::Error, scope: &str) -> ToolResult {
+    let s = format!("{err:#}");
+    let permission = (|| {
+        if let Some(pos) = s.find("code=") {
+            let rest = &s[pos + 5..];
+            let digits: String = rest.chars().take_while(|c| c.is_ascii_digit()).collect();
+            if let Ok(code) = digits.parse::<i64>() {
+                return is_feishu_permission_code(code);
+            }
+        }
+        s.contains("权限") || s.contains("无权限") || s.contains("Forbidden")
+            || s.contains("Access denied") || s.contains(" 403") || s.contains("(403")
+    })();
+    if permission {
+        ToolResult::err_needs_auth(scope)
+    } else {
+        ToolResult::err(s)
+    }
+}
+
 /// 需要授权的结果：缺少的 scope
 #[derive(Debug, Clone)]
 pub struct NeedsAuth {
@@ -32,7 +63,8 @@ async fn get_tenant_access_token() -> anyhow::Result<String> {
     let code = resp.get("code").and_then(|v| v.as_i64()).unwrap_or(-1);
     if code != 0 {
         return Err(anyhow::anyhow!(
-            "获取飞书 token 失败: {}",
+            "获取飞书 token 失败(code={}): {}",
+            code,
             resp.get("msg").and_then(|v| v.as_str()).unwrap_or("unknown")
         ));
     }
@@ -190,7 +222,7 @@ impl OfficeTool for FeishuDocReadTool {
                     continue_loop: None,
                 }
             }
-            Err(e) => ToolResult::err(format!("读取飞书文档失败: {e}")),
+            Err(e) => feishu_err_to_result(e, "docx:document:readonly"),
         }
     }
 }
@@ -206,7 +238,8 @@ async fn do_read_doc(token: &str, document_id: &str) -> anyhow::Result<String> {
     let code = resp.get("code").and_then(|v| v.as_i64()).unwrap_or(-1);
     if code != 0 {
         return Err(anyhow::anyhow!(
-            "飞书文档读取失败: {}",
+            "飞书文档读取失败(code={}): {}",
+            code,
             resp.get("msg").and_then(|v| v.as_str()).unwrap_or("unknown")
         ));
     }
@@ -283,7 +316,7 @@ impl OfficeTool for FeishuBitableQueryTool {
                     continue_loop: None,
                 }
             }
-            Err(e) => ToolResult::err(format!("查询飞书表格失败: {e}")),
+            Err(e) => feishu_err_to_result(e, "bitable:app:readonly"),
         }
     }
 }
@@ -300,7 +333,8 @@ async fn do_query_bitable(token: &str, app_token: &str, table_id: &str, page_siz
     let code = resp.get("code").and_then(|v| v.as_i64()).unwrap_or(-1);
     if code != 0 {
         return Err(anyhow::anyhow!(
-            "飞书表格查询失败: {}",
+            "飞书表格查询失败(code={}): {}",
+            code,
             resp.get("msg").and_then(|v| v.as_str()).unwrap_or("unknown")
         ));
     }
@@ -380,7 +414,7 @@ impl OfficeTool for FeishuCalendarListTool {
                     continue_loop: None,
                 }
             }
-            Err(e) => ToolResult::err(format!("查询飞书日历失败: {e}")),
+            Err(e) => feishu_err_to_result(e, "calendar:calendar:read"),
         }
     }
 }
@@ -406,7 +440,8 @@ async fn do_list_events(token: &str, calendar_id: &str, start_time: &str, end_ti
     let code = resp.get("code").and_then(|v| v.as_i64()).unwrap_or(-1);
     if code != 0 {
         return Err(anyhow::anyhow!(
-            "飞书日历查询失败: {}",
+            "飞书日历查询失败(code={}): {}",
+            code,
             resp.get("msg").and_then(|v| v.as_str()).unwrap_or("unknown")
         ));
     }
@@ -492,7 +527,7 @@ impl OfficeTool for FeishuDocCreateTool {
                     continue_loop: None,
                 }
             }
-            Err(e) => ToolResult::err(format!("创建飞书文档失败: {e}")),
+            Err(e) => feishu_err_to_result(e, "docx:document:create"),
         }
     }
 }
@@ -507,7 +542,8 @@ async fn do_create_doc(token: &str, title: &str, content: &str) -> anyhow::Resul
     let code = resp.get("code").and_then(|v| v.as_i64()).unwrap_or(-1);
     if code != 0 {
         return Err(anyhow::anyhow!(
-            "创建文档失败: {}",
+            "创建文档失败(code={}): {}",
+            code,
             resp.get("msg").and_then(|v| v.as_str()).unwrap_or("unknown")
         ));
     }
@@ -576,7 +612,7 @@ impl OfficeTool for FeishuBitableCreateRecordTool {
                 needs_auth: None,
                 continue_loop: None,
             },
-            Err(e) => ToolResult::err(format!("新增记录失败: {e}")),
+            Err(e) => feishu_err_to_result(e, "bitable:app"),
         }
     }
 }
@@ -593,7 +629,8 @@ async fn do_create_record(token: &str, app_token: &str, table_id: &str, fields: 
     let code = resp.get("code").and_then(|v| v.as_i64()).unwrap_or(-1);
     if code != 0 {
         return Err(anyhow::anyhow!(
-            "新增记录失败: {}",
+            "新增记录失败(code={}): {}",
+            code,
             resp.get("msg").and_then(|v| v.as_str()).unwrap_or("unknown")
         ));
     }
@@ -660,7 +697,7 @@ impl OfficeTool for FeishuCalendarCreateEventTool {
                 needs_auth: None,
                 continue_loop: None,
             },
-            Err(e) => ToolResult::err(format!("创建日程失败: {e}")),
+            Err(e) => feishu_err_to_result(e, "calendar:calendar.event:create"),
         }
     }
 }
@@ -682,7 +719,8 @@ async fn do_create_event(token: &str, calendar_id: &str, summary: &str, start_ti
     let code = resp.get("code").and_then(|v| v.as_i64()).unwrap_or(-1);
     if code != 0 {
         return Err(anyhow::anyhow!(
-            "创建日程失败: {}",
+            "创建日程失败(code={}): {}",
+            code,
             resp.get("msg").and_then(|v| v.as_str()).unwrap_or("unknown")
         ));
     }
@@ -748,7 +786,7 @@ impl OfficeTool for FeishuDriveListTool {
                     continue_loop: None,
                 }
             }
-            Err(e) => ToolResult::err(format!("列云盘文件失败: {e}")),
+            Err(e) => feishu_err_to_result(e, "drive:drive:readonly"),
         }
     }
 }
@@ -766,7 +804,8 @@ async fn do_list_drive(token: &str, folder_token: &str) -> anyhow::Result<Vec<se
     let code = resp.get("code").and_then(|v| v.as_i64()).unwrap_or(-1);
     if code != 0 {
         return Err(anyhow::anyhow!(
-            "列云盘文件失败: {}",
+            "列云盘文件失败(code={}): {}",
+            code,
             resp.get("msg").and_then(|v| v.as_str()).unwrap_or("unknown")
         ));
     }
@@ -850,7 +889,7 @@ impl OfficeTool for FeishuWikiSearchTool {
                     continue_loop: None,
                 }
             }
-            Err(e) => ToolResult::err(format!("搜索知识库失败: {e}")),
+            Err(e) => feishu_err_to_result(e, "wiki:wiki:readonly"),
         }
     }
 }
@@ -865,7 +904,8 @@ async fn do_search_wiki(token: &str, query: &str) -> anyhow::Result<Vec<serde_js
     let code = resp.get("code").and_then(|v| v.as_i64()).unwrap_or(-1);
     if code != 0 {
         return Err(anyhow::anyhow!(
-            "搜索知识库失败: {}",
+            "搜索知识库失败(code={}): {}",
+            code,
             resp.get("msg").and_then(|v| v.as_str()).unwrap_or("unknown")
         ));
     }

@@ -99,6 +99,7 @@ export interface AppSettings {
   nas_config?: NasConfig;
   nas_configs?: NasConfig[];
   tts?: TtsSettings;
+  artifact_panel_behavior?: string;
   image_profile?: MediaProfileConfig;
   video_profile?: MediaProfileConfig;
   image_profiles?: MediaProfileConfig[];

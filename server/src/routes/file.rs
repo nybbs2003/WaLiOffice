@@ -311,6 +311,7 @@ async fn get_file_content(
                 "id": file.id,
                 "name": file.name,
                 "file_type": file.file_type,
+                "preview_type": text_preview_type(&file.name),
                 "text": text,
                 "parser": metadata.get("text_parser"),
                 "truncated": metadata.get("text_truncated").and_then(|value| value.as_bool()).unwrap_or(false),
@@ -339,10 +340,23 @@ async fn get_file_content(
         "id": file.id,
         "name": file.name,
         "file_type": file.file_type,
+        "preview_type": text_preview_type(&file.name),
         "text": extracted.text,
         "parser": extracted.parser,
         "truncated": extracted.truncated,
     })))
+}
+
+/// 文本类文件按扩展名给预览类型（md/markdown/txt → markdown）
+fn text_preview_type(name: &str) -> &'static str {
+    let ext = name
+        .rsplit_once('.')
+        .map(|(_, e)| e.to_lowercase())
+        .unwrap_or_default();
+    match ext.as_str() {
+        "md" | "markdown" | "txt" => "markdown",
+        _ => "text",
+    }
 }
 
 async fn delete_file(

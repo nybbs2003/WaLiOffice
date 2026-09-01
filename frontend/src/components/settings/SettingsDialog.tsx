@@ -1,4 +1,4 @@
-import { Check, KeyRound, Plus, Trash2, X, Cpu, Search, Loader2, HardDrive, Image as ImageIcon, Video as VideoIcon, Volume2 } from 'lucide-react'
+import { Check, KeyRound, Plus, Trash2, X, Cpu, Search, Loader2, HardDrive, Image as ImageIcon, Video as VideoIcon, Volume2, LayoutGrid } from 'lucide-react'
 import { ModelCombobox } from './ModelCombobox'
 import type { ModelOptionItem } from './ModelCombobox'
 import { useEffect, useMemo, useState } from 'react'
@@ -88,7 +88,7 @@ const emptyMcpServer = (): MCPServiceConfig => ({
 })
 
 export function SettingsDialog({ open, settings, onClose, onSave }: SettingsDialogProps) {
-  const [section, setSection] = useState<'llm' | 'mcp' | 'search' | 'nas' | 'image' | 'video' | 'tts'>('llm')
+  const [section, setSection] = useState<'llm' | 'mcp' | 'search' | 'nas' | 'image' | 'video' | 'tts' | 'ui'>('llm')
   const [draft, setDraft] = useState<AppSettings | null>(settings)
   const [saving, setSaving] = useState(false)
   const [testingMcpId, setTestingMcpId] = useState<string | null>(null)
@@ -431,6 +431,7 @@ export function SettingsDialog({ open, settings, onClose, onSave }: SettingsDial
               ['nas', 'WebDAV 数据源', HardDrive],
               ['mcp', 'MCP 服务', KeyRound],
               ['tts', '语音播报', Volume2],
+              ['ui', '界面设置', LayoutGrid],
             ].map(([key, label, Icon]: any) => (
               <button
                 key={key}
@@ -638,6 +639,41 @@ export function SettingsDialog({ open, settings, onClose, onSave }: SettingsDial
                 <p className="rounded-lg bg-surface-50 px-3 py-2 text-xs text-surface-400">
                   DuckDuckGo 免费无需 key；Tavily / Brave / Kimi 需要各自的 API Key。未填 key 的源会自动跳过。
                 </p>
+              </div>
+            </div>
+          )}
+
+          {section === 'ui' && (
+            <div>
+              <h2 className="text-xl font-bold tracking-tight text-surface-950">界面设置</h2>
+              <p className="mt-1 text-sm text-surface-500">控制右侧成果栏的弹出行为。</p>
+              <div className="mt-5 space-y-2">
+                {[
+                  ['never', '不弹出', '始终不自动弹出，需要时点右侧「切换成果展示」手动打开'],
+                  ['on_artifact', '有最终产物时弹出', '生成完成且有产物时自动弹出（默认）'],
+                  ['always', '总是弹出', '只要存在可展示的成果（含生成中的 PPT 等）就保持弹出'],
+                ].map(([value, label, desc]: any) => (
+                  <label
+                    key={value}
+                    className={`flex cursor-pointer items-start gap-3 rounded-2xl border p-3.5 transition ${
+                      (draft.artifact_panel_behavior || 'on_artifact') === value
+                        ? 'border-surface-950 bg-surface-50'
+                        : 'border-surface-200 bg-white hover:bg-surface-50'
+                    }`}
+                  >
+                    <input
+                      type="radio"
+                      name="artifact_panel_behavior"
+                      checked={(draft.artifact_panel_behavior || 'on_artifact') === value}
+                      onChange={() => updateDraft({ artifact_panel_behavior: value })}
+                      className="mt-0.5 h-4 w-4 accent-surface-950"
+                    />
+                    <span className="min-w-0">
+                      <span className="block text-sm font-semibold text-surface-800">{label}</span>
+                      <span className="mt-0.5 block text-xs text-surface-500">{desc}</span>
+                    </span>
+                  </label>
+                ))}
               </div>
             </div>
           )}
