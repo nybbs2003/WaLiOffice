@@ -505,7 +505,7 @@ impl OfficeTool for ImagePromptTool {
                         body["nas_out"] = json!(nas_out);
                     }
                     if let Some(nb) = nas_body.clone() {
-                        body["nas"] = nb;
+                        body["nas_sources"] = nb;
                     }
                 }
                 body

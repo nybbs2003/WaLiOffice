@@ -89,6 +89,7 @@ export interface AppSettings {
   mcp_servers: MCPServiceConfig[];
   search_providers?: SearchProvidersConfig;
   nas_config?: NasConfig;
+  nas_configs?: NasConfig[];
   image_profile?: MediaProfileConfig;
   video_profile?: MediaProfileConfig;
   image_profiles?: MediaProfileConfig[];

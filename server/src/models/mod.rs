@@ -165,6 +165,9 @@ pub struct AppSettings {
     pub feishu_token: FeishuToken,
     #[serde(default)]
     pub nas_config: NasConfig,
+    /// 多个 WebDAV 数据源（企业内部 NAS 或任何 WebDAV 服务，凭据有效即可）
+    #[serde(default)]
+    pub nas_configs: Vec<NasConfig>,
     #[serde(default)]
     pub image_profile: MediaProfileConfig,
     #[serde(default)]
@@ -235,15 +238,6 @@ pub struct NasConfig {
     /// 是否已配置
     #[serde(default)]
     pub enabled: bool,
-    /// 访问模式：direct=直接 WebDAV（office 与 NAS 同网时）；worker=经局域网媒体 worker 中继（office 在公网部署时）
-    #[serde(default)]
-    pub mode: String,
-    /// worker 中继地址（office 所在主机可达的 worker 控制面，如 http://127.0.0.1:19095）
-    #[serde(default)]
-    pub worker_url: String,
-    /// worker 控制面密钥
-    #[serde(default)]
-    pub worker_key: String,
 }
 
 #[derive(Debug, Clone, Deserialize)]

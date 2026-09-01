@@ -8,26 +8,44 @@ use crate::models::NasConfig;
 /// macOS 系统 CA bundle 尚未收录，懒猫微服 *.heiyu.space 证书链需要它。
 const LE_NEW_ROOTS_PEM: &str = include_str!("../../../assets/le-new-roots.pem");
 
-/// 读取用户数据源配置中的 WebDAV 凭据，组装成随媒体请求传给 worker 的 JSON。
-/// 用于本地 NAS 生图/生视频：凭据随请求使用、不落盘到 spark。
+/// 读取用户全部启用的 WebDAV 数据源凭据，组装成随媒体请求传给 worker 的数组。
+/// 用于本地 NAS 生图/生视频：worker 自动在局域网识别 NAS 并匹配凭据，不落盘到 spark。
 pub async fn build_nas_credentials(user_id: &str) -> Option<serde_json::Value> {
-    let pool = crate::state::db_pool();
-    let settings = crate::db::settings_repo::find_by_user(&pool, user_id).await.ok()??;
-    let cfg = settings.nas_config;
-    if !cfg.enabled || cfg.base_url.is_empty() || cfg.username.is_empty() {
+    let sources = enabled_nas_sources(user_id).await;
+    if sources.is_empty() {
         return None;
     }
-    Some(serde_json::json!({
-        "base": cfg.base_url,
-        "user": cfg.username,
-        "password": cfg.password,
-    }))
+    Some(serde_json::json!(sources.iter().map(|cfg| {
+        serde_json::json!({
+            "name": cfg.name,
+            "base": cfg.base_url,
+            "user": cfg.username,
+            "password": cfg.password,
+        })
+    }).collect::<Vec<_>>()))
 }
 
-/// worker 中继模式判定：office 部署在公网（如阿里云）时，NAS 读写经局域网媒体 worker 中继，
-/// 数据面在 NAS↔spark 局域网内完成，不经过公网服务器。
-pub fn is_worker_relay(cfg: &NasConfig) -> bool {
-    cfg.mode == "worker" && !cfg.worker_url.is_empty()
+/// worker 中继地址与密钥：office 与媒体 worker 同机部署时的回环默认值，
+/// 无需用户配置（spark 局域网 NAS 由 worker 自动识别）。
+const WORKER_RELAY_URL: &str = "http://127.0.0.1:19095";
+const WORKER_RELAY_KEY: &str = "media-worker-2026";
+
+/// 自动访问策略：先直连 WebDAV（office 与数据源同网时最快），
+/// 连不上时自动降级到局域网 worker 中继（数据面在 NAS↔spark 局域网内完成）。
+fn relay_worker_url() -> String {
+    std::env::var("WORKER_RELAY_URL").unwrap_or_else(|_| WORKER_RELAY_URL.to_string())
+}
+fn relay_worker_key() -> String {
+    std::env::var("WORKER_RELAY_KEY").unwrap_or_else(|_| WORKER_RELAY_KEY.to_string())
+}
+
+fn relay_headers(cfg: &NasConfig) -> Vec<(String, String)> {
+    vec![
+        ("Authorization".into(), format!("Bearer {}", relay_worker_key())),
+        ("X-NAS-Base".into(), cfg.base_url.clone()),
+        ("X-NAS-User".into(), cfg.username.clone()),
+        ("X-NAS-Pass".into(), cfg.password.clone()),
+    ]
 }
 
 /// 经 worker 控制面发 HTTP 请求。
@@ -44,7 +62,7 @@ async fn worker_request(
         .build()?;
     let mut req = client
         .request(reqwest::Method::from_bytes(method.as_bytes())?, url)
-        .header("Authorization", format!("Bearer {}", cfg.worker_key))
+        .header("Authorization", format!("Bearer {}", relay_worker_key()))
         .header("X-NAS-Base", cfg.base_url.clone())
         .header("X-NAS-User", cfg.username.clone())
         .header("X-NAS-Pass", cfg.password.clone());
@@ -58,31 +76,41 @@ async fn worker_request(
     Ok((status, text))
 }
 
-/// 读取当前用户的 NAS 访问凭据（按 user_id 隔离，多租户互不冲突；纯 HTTP(S) 请求，不挂载文件系统）
-async fn get_nas_config(ctx: &ToolContext) -> anyhow::Result<NasConfig> {
+/// 汇总当前用户全部启用的 WebDAV 数据源（旧单源 nas_config + 新多源 nas_configs，去重）
+pub async fn enabled_nas_sources(user_id: &str) -> Vec<NasConfig> {
     let pool = crate::state::db_pool();
-    let settings = crate::db::settings_repo::find_by_user(&pool, &ctx.user_id)
-        .await?
-        .unwrap_or_else(crate::routes::settings::default_settings);
-    let cfg = settings.nas_config;
-    if !cfg.enabled {
+    let settings = match crate::db::settings_repo::find_by_user(&pool, user_id).await {
+        Ok(Some(s)) => s,
+        _ => return Vec::new(),
+    };
+    let mut out: Vec<NasConfig> = Vec::new();
+    for cfg in settings.nas_configs.iter().chain(std::iter::once(&settings.nas_config)) {
+        if !cfg.enabled || cfg.base_url.trim().is_empty() || cfg.username.trim().is_empty() {
+            continue;
+        }
+        if out.iter().any(|c| c.base_url == cfg.base_url) {
+            continue;
+        }
+        out.push(cfg.clone());
+    }
+    out
+}
+
+/// 按名称或顺序取一个数据源（工具支持 nas_source 参数指定，缺省用第一个启用源）
+async fn resolve_nas_source(ctx: &ToolContext, source_name: &str) -> anyhow::Result<NasConfig> {
+    let sources = enabled_nas_sources(&ctx.user_id).await;
+    if sources.is_empty() {
         return Err(anyhow::anyhow!(
-            "尚未配置 WebDAV 数据源，请先在「设置 → 数据源」中填写懒猫微服 WebDAV 地址与凭据"
+            "尚未配置可用的 WebDAV 数据源，请先在「设置 → 数据源」中填写 WebDAV 地址与凭据"
         ));
     }
-    if is_worker_relay(&cfg) {
-        if cfg.worker_url.is_empty() {
-            return Err(anyhow::anyhow!("worker 中继模式缺少 worker 地址"));
+    if !source_name.is_empty() {
+        if let Some(cfg) = sources.iter().find(|c| c.name == source_name) {
+            return Ok(cfg.clone());
         }
-        return Ok(cfg);
+        return Err(anyhow::anyhow!("未找到名为「{source_name}」的数据源"));
     }
-    if cfg.base_url.is_empty() {
-        return Err(anyhow::anyhow!("WebDAV 数据源缺少地址"));
-    }
-    if cfg.username.is_empty() {
-        return Err(anyhow::anyhow!("WebDAV 数据源缺少用户名"));
-    }
-    Ok(cfg)
+    Ok(sources[0].clone())
 }
 
 /// 用 openssl 建立 TLS 连接（同步，跑在 spawn_blocking 里）。
@@ -287,31 +315,17 @@ async fn dav_list(
     cfg: &NasConfig,
     rel_path: &str,
 ) -> anyhow::Result<Vec<serde_json::Value>> {
-    if is_worker_relay(cfg) {
-        let path = sanitize_path(rel_path)?;
-        let url = format!("{}/nas/list?path={}", cfg.worker_url.trim_end_matches('/'), path);
-        let (status, body) = worker_request(cfg, "GET", &url, None).await?;
-        if status != 200 {
-            return Err(anyhow::anyhow!("worker 列目录失败（HTTP {status}）: {}", body.chars().take(300).collect::<String>()));
-        }
-        let j: serde_json::Value = serde_json::from_str(&body).map_err(|e| anyhow::anyhow!("worker 响应解析失败: {e}"))?;
-        let items = j
-            .get("items")
-            .and_then(|v| v.as_array())
-            .cloned()
-            .unwrap_or_default()
-            .into_iter()
-            .map(|it| json!({
-                "name": it.get("name").and_then(|v| v.as_str()).unwrap_or(""),
-                "href": it.get("name").and_then(|v| v.as_str()).unwrap_or(""),
-                "is_dir": it.get("is_dir").and_then(|v| v.as_bool()).unwrap_or(false),
-                "size": it.get("size").and_then(|v| v.as_i64()).unwrap_or(0),
-                "modified": it.get("mtime").and_then(|v| v.as_str()).unwrap_or(""),
-            }))
-            .collect::<Vec<_>>();
-        return Ok(items);
-    }
     let full_path = match sanitize_path(rel_path) { Ok(p) => p, Err(e) => return Err(e) };
+    match dav_list_direct(cfg, &full_path).await {
+        Ok(items) => Ok(items),
+        Err(direct_err) => {
+            tracing::debug!("NAS 直连失败（{direct_err:#}），自动降级 worker 中继");
+            dav_list_relay(cfg, &full_path).await
+        }
+    }
+}
+
+async fn dav_list_direct(cfg: &NasConfig, full_path: &str) -> anyhow::Result<Vec<serde_json::Value>> {
     let url = join_url(&cfg.base_url, &full_path);
     let body = r#"<?xml version="1.0" encoding="utf-8"?>
 <d:propfind xmlns:d="DAV:">
@@ -345,6 +359,30 @@ async fn dav_list(
     }
 
     parse_propfind_response(&resp_body)
+}
+
+async fn dav_list_relay(cfg: &NasConfig, path: &str) -> anyhow::Result<Vec<serde_json::Value>> {
+    let url = format!("{}/nas/list?path={}", relay_worker_url().trim_end_matches('/'), path);
+    let (status, body) = worker_request(cfg, "GET", &url, None).await?;
+    if status != 200 {
+        return Err(anyhow::anyhow!("worker 列目录失败（HTTP {status}）: {}", body.chars().take(300).collect::<String>()));
+    }
+    let j: serde_json::Value = serde_json::from_str(&body).map_err(|e| anyhow::anyhow!("worker 响应解析失败: {e}"))?;
+    let items = j
+        .get("items")
+        .and_then(|v| v.as_array())
+        .cloned()
+        .unwrap_or_default()
+        .into_iter()
+        .map(|it| json!({
+            "name": it.get("name").and_then(|v| v.as_str()).unwrap_or(""),
+            "href": it.get("name").and_then(|v| v.as_str()).unwrap_or(""),
+            "is_dir": it.get("is_dir").and_then(|v| v.as_bool()).unwrap_or(false),
+            "size": it.get("size").and_then(|v| v.as_i64()).unwrap_or(0),
+            "modified": it.get("mtime").and_then(|v| v.as_str()).unwrap_or(""),
+        }))
+        .collect::<Vec<_>>();
+    Ok(items)
 }
 
 /// 解析 PROPFIND 的 multistatus XML
@@ -415,16 +453,21 @@ fn parse_propfind_response(body: &str) -> anyhow::Result<Vec<serde_json::Value>>
 
 /// GET 读取文件内容
 async fn dav_read(cfg: &NasConfig, rel_path: &str) -> anyhow::Result<(String, String)> {
-    if is_worker_relay(cfg) {
-        let path = sanitize_path(rel_path)?;
-        let url = format!("{}/nas/get?path={}", cfg.worker_url.trim_end_matches('/'), path);
-        let (status, body) = worker_request(cfg, "GET", &url, None).await?;
-        if status != 200 {
-            return Err(anyhow::anyhow!("worker 读取失败（HTTP {status}）: {}", body.chars().take(300).collect::<String>()));
-        }
-        return Ok((body, "text/plain".to_string()));
-    }
     let full_path = match sanitize_path(rel_path) { Ok(p) => p, Err(e) => return Err(e) };
+    match dav_read_direct(cfg, &full_path).await {
+        Ok(v) => Ok(v),
+        Err(_direct_err) => {
+            let url = format!("{}/nas/get?path={}", relay_worker_url().trim_end_matches('/'), full_path);
+            let (status, body) = worker_request(cfg, "GET", &url, None).await?;
+            if status != 200 {
+                return Err(anyhow::anyhow!("worker 读取失败（HTTP {status}）: {}", body.chars().take(300).collect::<String>()));
+            }
+            Ok((body, "text/plain".to_string()))
+        }
+    }
+}
+
+async fn dav_read_direct(cfg: &NasConfig, full_path: &str) -> anyhow::Result<(String, String)> {
     let url = join_url(&cfg.base_url, &full_path);
     let (status, body) = dav_request(
         "GET",
@@ -442,16 +485,21 @@ async fn dav_read(cfg: &NasConfig, rel_path: &str) -> anyhow::Result<(String, St
 
 /// PUT 写入文件
 async fn dav_write(cfg: &NasConfig, rel_path: &str, content: &str) -> anyhow::Result<()> {
-    if is_worker_relay(cfg) {
-        let path = sanitize_path(rel_path)?;
-        let url = format!("{}/nas/put?path={}", cfg.worker_url.trim_end_matches('/'), path);
-        let (status, body) = worker_request(cfg, "PUT", &url, Some(content.as_bytes().to_vec())).await?;
-        if status != 200 {
-            return Err(anyhow::anyhow!("worker 写入失败（HTTP {status}）: {}", body.chars().take(300).collect::<String>()));
-        }
-        return Ok(());
-    }
     let full_path = match sanitize_path(rel_path) { Ok(p) => p, Err(e) => return Err(e) };
+    match dav_write_direct(cfg, &full_path, content).await {
+        Ok(()) => Ok(()),
+        Err(_direct_err) => {
+            let url = format!("{}/nas/put?path={}", relay_worker_url().trim_end_matches('/'), full_path);
+            let (status, body) = worker_request(cfg, "PUT", &url, Some(content.as_bytes().to_vec())).await?;
+            if status != 200 {
+                return Err(anyhow::anyhow!("worker 写入失败（HTTP {status}）: {}", body.chars().take(300).collect::<String>()));
+            }
+            Ok(())
+        }
+    }
+}
+
+async fn dav_write_direct(cfg: &NasConfig, full_path: &str, content: &str) -> anyhow::Result<()> {
     let url = join_url(&cfg.base_url, &full_path);
     let (status, body) = dav_request(
         "PUT",
@@ -469,17 +517,22 @@ async fn dav_write(cfg: &NasConfig, rel_path: &str, content: &str) -> anyhow::Re
 
 /// MKCOL 建目录
 async fn dav_mkdir(cfg: &NasConfig, rel_path: &str) -> anyhow::Result<()> {
-    if is_worker_relay(cfg) {
-        let path = sanitize_path(rel_path)?;
-        let url = format!("{}/nas/mkdir", cfg.worker_url.trim_end_matches('/'));
-        let body = serde_json::json!({ "path": path }).to_string();
-        let (status, resp_body) = worker_request(cfg, "POST", &url, Some(body.as_bytes().to_vec())).await?;
-        if status != 200 {
-            return Err(anyhow::anyhow!("worker 建目录失败（HTTP {status}）: {}", resp_body.chars().take(300).collect::<String>()));
-        }
-        return Ok(());
-    }
     let full_path = match sanitize_path(rel_path) { Ok(p) => p, Err(e) => return Err(e) };
+    match dav_mkdir_direct(cfg, &full_path).await {
+        Ok(()) => Ok(()),
+        Err(_direct_err) => {
+            let url = format!("{}/nas/mkdir", relay_worker_url().trim_end_matches('/'));
+            let body = serde_json::json!({ "path": full_path }).to_string();
+            let (status, resp_body) = worker_request(cfg, "POST", &url, Some(body.as_bytes().to_vec())).await?;
+            if status != 200 {
+                return Err(anyhow::anyhow!("worker 建目录失败（HTTP {status}）: {}", resp_body.chars().take(300).collect::<String>()));
+            }
+            Ok(())
+        }
+    }
+}
+
+async fn dav_mkdir_direct(cfg: &NasConfig, full_path: &str) -> anyhow::Result<()> {
     let url = join_url(&cfg.base_url, &full_path);
     let (status, body) = dav_request(
         "MKCOL",
@@ -531,7 +584,8 @@ impl OfficeTool for NasListTool {
         json!({
             "type": "object",
             "properties": {
-                "path": { "type": "string", "description": "NAS 上的目录路径（相对访问根，如 /docs 或空字符串表示根目录）" }
+                "path": { "type": "string", "description": "NAS 上的目录路径（相对访问根，如 /docs 或空字符串表示根目录）" },
+                "source": { "type": "string", "description": "数据源名称（可选，多个数据源时指定；不传用第一个启用源）" }
             },
             "required": []
         })
@@ -543,7 +597,8 @@ impl OfficeTool for NasListTool {
 
     async fn call(&self, input: serde_json::Value, ctx: &ToolContext) -> ToolResult {
         let path = input.get("path").and_then(|v| v.as_str()).unwrap_or("");
-        let cfg = match get_nas_config(ctx).await {
+        let source = input.get("source").and_then(|v| v.as_str()).unwrap_or("");
+        let cfg = match resolve_nas_source(ctx, source).await {
             Ok(c) => c,
             Err(e) => return ToolResult::err(format!("{e}")),
         };
@@ -587,7 +642,8 @@ impl OfficeTool for NasReadTool {
         json!({
             "type": "object",
             "properties": {
-                "path": { "type": "string", "description": "NAS 上的文件路径（相对访问根，如 /docs/方案.md）" }
+                "path": { "type": "string", "description": "NAS 上的文件路径（相对访问根，如 /docs/方案.md）" },
+                "source": { "type": "string", "description": "数据源名称（可选，多个数据源时指定；不传用第一个启用源）" }
             },
             "required": ["path"]
         })
@@ -602,7 +658,8 @@ impl OfficeTool for NasReadTool {
         if path.is_empty() {
             return ToolResult::err("缺少 path 参数");
         }
-        let cfg = match get_nas_config(ctx).await {
+        let source = input.get("source").and_then(|v| v.as_str()).unwrap_or("");
+        let cfg = match resolve_nas_source(ctx, source).await {
             Ok(c) => c,
             Err(e) => return ToolResult::err(format!("{e}")),
         };
@@ -664,7 +721,8 @@ impl OfficeTool for NasWriteTool {
         if path.is_empty() {
             return ToolResult::err("缺少 path 参数");
         }
-        let cfg = match get_nas_config(ctx).await {
+        let source = input.get("source").and_then(|v| v.as_str()).unwrap_or("");
+        let cfg = match resolve_nas_source(ctx, source).await {
             Ok(c) => c,
             Err(e) => return ToolResult::err(format!("{e}")),
         };
@@ -715,7 +773,8 @@ impl OfficeTool for NasMkdirTool {
         if path.is_empty() {
             return ToolResult::err("缺少 path 参数");
         }
-        let cfg = match get_nas_config(ctx).await {
+        let source = input.get("source").and_then(|v| v.as_str()).unwrap_or("");
+        let cfg = match resolve_nas_source(ctx, source).await {
             Ok(c) => c,
             Err(e) => return ToolResult::err(format!("{e}")),
         };

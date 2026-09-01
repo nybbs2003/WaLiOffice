@@ -835,7 +835,7 @@ impl OfficeTool for VideoGenerateTool {
                     vb["nas_out"] = json!(nas_out);
                 }
                 if let Some(nas_body) = build_nas_credentials(&ctx.user_id).await {
-                    vb["nas"] = nas_body;
+                    vb["nas_sources"] = nas_body;
                 }
             }
             vb

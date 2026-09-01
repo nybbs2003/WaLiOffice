@@ -3,7 +3,7 @@ import { ModelCombobox } from './ModelCombobox'
 import type { ModelOptionItem } from './ModelCombobox'
 import { useEffect, useMemo, useState } from 'react'
 import { settingsApi } from '@/api'
-import type { AppSettings, LLMProfile, MCPServiceConfig, MediaProfileConfig } from '@/types'
+import type { AppSettings, LLMProfile, MCPServiceConfig, MediaProfileConfig, NasConfig } from '@/types'
 
 interface SettingsDialogProps {
   open: boolean
@@ -341,25 +341,6 @@ export function SettingsDialog({ open, settings, onClose, onSave }: SettingsDial
     }
   }
 
-  const testNas = async () => {
-    if (!draft?.nas_config) return
-    setTestingNas(true)
-    setNasTestResult(null)
-    try {
-      const res = await settingsApi.testNas(draft.nas_config)
-      setNasTestResult({
-        ok: !!res.data?.ok,
-        message: res.data?.message || '测试完成',
-      })
-    } catch (err: any) {
-      setNasTestResult({
-        ok: false,
-        message: err.response?.data?.detail || err.message || '测试失败',
-      })
-    } finally {
-      setTestingNas(false)
-    }
-  }
 
   const testMedia = async (kind: 'image' | 'video') => {
     const profiles = getMediaProfiles(draft!, kind)
@@ -660,126 +641,140 @@ export function SettingsDialog({ open, settings, onClose, onSave }: SettingsDial
             </div>
           )}
 
-          {section === 'nas' && (
-            <div>
-              <h2 className="text-xl font-bold tracking-tight text-surface-950">WebDAV 数据源</h2>
-              <p className="mt-1 text-sm text-surface-500">通过 HTTP(S) WebDAV 协议访问懒猫微服 NAS 文件。办公室部署在公网（阿里云）时推荐「局域网 worker 中继」模式：NAS 读写全部在本地算力机（spark）与 NAS 之间的局域网内完成，大数据不经过公网服务器。</p>
-              <div className="mt-5 space-y-4">
-                <div className="rounded-2xl border border-surface-200 bg-surface-50 p-3">
-                  <label className="block text-sm font-semibold text-surface-700">访问模式</label>
-                  <div className="mt-2 flex gap-2">
-                    <button
-                      type="button"
-                      onClick={() => updateDraft({ nas_config: { ...(draft.nas_config || { name: '', base_url: '', username: '', password: '', worker_url: '', worker_key: '', enabled: true }), mode: 'worker' } })}
-                      className={`rounded-xl px-3 py-2 text-sm font-semibold transition ${(draft.nas_config?.mode || 'direct') === 'worker' ? 'bg-surface-950 text-white' : 'bg-white text-surface-600 border border-surface-300 hover:bg-surface-100'}`}
-                    >
-                      局域网 worker 中继（推荐·公网部署）
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => updateDraft({ nas_config: { ...(draft.nas_config || { name: '', base_url: '', username: '', password: '', worker_url: '', worker_key: '', enabled: true }), mode: 'direct' } })}
-                      className={`rounded-xl px-3 py-2 text-sm font-semibold transition ${(draft.nas_config?.mode || 'direct') === 'direct' ? 'bg-surface-950 text-white' : 'bg-white text-surface-600 border border-surface-300 hover:bg-surface-100'}`}
-                    >
-                      直接 WebDAV（office 与 NAS 同局域网）
-                    </button>
-                  </div>
+          {section === 'nas' && (() => {
+            const emptySource = (): NasConfig => ({ name: '', base_url: '', username: '', password: '', enabled: true })
+            const sources: NasConfig[] = draft.nas_configs && draft.nas_configs.length > 0
+              ? draft.nas_configs
+              : (draft.nas_config?.enabled || draft.nas_config?.base_url)
+                ? [draft.nas_config]
+                : [emptySource()]
+
+            const updateSource = (index: number, patch: Partial<NasConfig>) => {
+              const next = sources.map((src, i) => (i === index ? { ...src, ...patch } : src))
+              updateDraft({ nas_configs: next })
+            }
+            const addSource = () => updateDraft({ nas_configs: [...sources, emptySource()] })
+            const removeSource = (index: number) => {
+              const next = sources.filter((_, i) => i !== index)
+              updateDraft({ nas_configs: next.length > 0 ? next : [emptySource()] })
+            }
+            const testSource = async (index: number) => {
+              const src = sources[index]
+              if (!src) return
+              setTestingNas(true)
+              setNasTestResult(null)
+              try {
+                const res = await settingsApi.testNas(src)
+                setNasTestResult({
+                  ok: !!res.data?.ok,
+                  message: res.data?.message || '测试完成',
+                })
+              } catch (err) {
+                setNasTestResult({
+                  ok: false,
+                  message: (err as any)?.response?.data?.detail || (err instanceof Error ? err.message : String(err)),
+                })
+              } finally {
+                setTestingNas(false)
+              }
+            }
+
+            return (
+              <div>
+                <h2 className="text-xl font-bold tracking-tight text-surface-950">WebDAV 数据源</h2>
+                <p className="mt-1 text-sm text-surface-500">可配置多个 WebDAV 数据源——企业内部 NAS 或任何支持 WebDAV 协议的服务，凭据有效即可。对话中读取文档、生图/生视频的素材来源与成品存放，都会自动匹配这些数据源；本地算力机（spark）与 NAS 同局域网时自动走局域网直连，无需额外配置。</p>
+                <div className="mt-5 space-y-5">
+                  {sources.map((src, index) => (
+                    <div key={index} className="rounded-2xl border border-surface-200 p-4 space-y-3">
+                      <div className="flex items-center justify-between">
+                        <label className="flex items-center gap-2 text-sm font-semibold text-surface-600">
+                          <input
+                            type="checkbox"
+                            checked={src.enabled || false}
+                            onChange={(event) => updateSource(index, { enabled: event.target.checked })}
+                            className="h-4 w-4 rounded border-surface-300 text-surface-950"
+                          />
+                          启用
+                        </label>
+                        {sources.length > 1 && (
+                          <button
+                            type="button"
+                            onClick={() => removeSource(index)}
+                            className="rounded-lg px-2 py-1 text-xs font-semibold text-red-500 hover:bg-red-50"
+                          >
+                            删除此数据源
+                          </button>
+                        )}
+                      </div>
+
+                      <label className="block text-sm font-semibold text-surface-600">
+                        数据源名称
+                        <input
+                          value={src.name || ''}
+                          onChange={(event) => updateSource(index, { name: event.target.value })}
+                          placeholder="如：懒猫微服 / 公司资料库"
+                          className="mt-2 w-full rounded-2xl border border-black/10 bg-white px-3 py-2.5 text-sm outline-none focus:border-surface-500"
+                        />
+                      </label>
+
+                      <label className="block text-sm font-semibold text-surface-600">
+                        WebDAV 地址
+                        <input
+                          value={src.base_url || ''}
+                          onChange={(event) => updateSource(index, { base_url: event.target.value })}
+                          placeholder="如 https://xxx.heiyu.space/dav 或 http://192.168.1.38:5006/_lzc/files/home"
+                          className="mt-2 w-full rounded-2xl border border-black/10 bg-white px-3 py-2.5 font-mono text-sm outline-none focus:border-surface-500"
+                        />
+                      </label>
+
+                      <div className="grid gap-4 md:grid-cols-2">
+                        <label className="block text-sm font-semibold text-surface-600">
+                          用户名
+                          <input
+                            value={src.username || ''}
+                            onChange={(event) => updateSource(index, { username: event.target.value })}
+                            className="mt-2 w-full rounded-2xl border border-black/10 bg-white px-3 py-2.5 text-sm outline-none focus:border-surface-500"
+                          />
+                        </label>
+                        <label className="block text-sm font-semibold text-surface-600">
+                          密码
+                          <input
+                            type="password"
+                            value={src.password || ''}
+                            onChange={(event) => updateSource(index, { password: event.target.value })}
+                            className="mt-2 w-full rounded-2xl border border-black/10 bg-white px-3 py-2.5 font-mono text-sm outline-none focus:border-surface-500"
+                          />
+                        </label>
+                      </div>
+
+                      <button
+                        type="button"
+                        onClick={() => testSource(index)}
+                        disabled={testingNas}
+                        className="flex items-center gap-2 rounded-2xl border border-surface-300 bg-white px-4 py-2 text-sm font-semibold text-surface-700 transition hover:bg-surface-50 disabled:cursor-not-allowed disabled:opacity-50"
+                      >
+                        {testingNas ? '测试中...' : '测试连接'}
+                      </button>
+                    </div>
+                  ))}
+
+                  <button
+                    type="button"
+                    onClick={addSource}
+                    className="flex items-center gap-2 rounded-2xl border border-dashed border-surface-300 bg-white px-4 py-2 text-sm font-semibold text-surface-600 transition hover:bg-surface-50"
+                  >
+                    + 添加数据源
+                  </button>
+
+                  {nasTestResult && (
+                    <div className={`rounded-lg px-3 py-2 text-sm break-all whitespace-pre-wrap leading-relaxed ${nasTestResult.ok ? 'bg-emerald-50 text-emerald-700' : 'bg-red-50 text-red-600'}`}>
+                      {nasTestResult.message}
+                    </div>
+                  )}
                 </div>
-                <label className="flex items-center gap-2 text-sm font-semibold text-surface-600">
-                  <input
-                    type="checkbox"
-                    checked={draft.nas_config?.enabled || false}
-                    onChange={(event) => updateDraft({ nas_config: { ...(draft.nas_config || { name: '', base_url: '', username: '', password: '', worker_url: '', worker_key: '', enabled: false }), enabled: event.target.checked } })}
-                    className="h-4 w-4 rounded border-surface-300 text-surface-950"
-                  />
-                  启用 WebDAV 数据源
-                </label>
-
-                <label className="block text-sm font-semibold text-surface-600">
-                  数据源名称
-                  <input
-                    value={draft.nas_config?.name || ''}
-                    onChange={(event) => updateDraft({ nas_config: { ...(draft.nas_config || { base_url: '', username: '', password: '', enabled: true }), name: event.target.value } })}
-                    placeholder="如：公司资料库"
-                    className="mt-2 w-full rounded-2xl border border-black/10 bg-white px-3 py-2.5 text-sm outline-none focus:border-surface-500"
-                  />
-                </label>
-
-                {(draft.nas_config?.mode || 'direct') === 'worker' && (
-                  <>
-                    <label className="block text-sm font-semibold text-surface-600">
-                      Worker 控制面地址（spark 局域网 worker 经 frp 的回环地址）
-                      <input
-                        value={draft.nas_config?.worker_url || ''}
-                        onChange={(event) => updateDraft({ nas_config: { ...(draft.nas_config || { name: '', base_url: '', username: '', password: '', enabled: true }), worker_url: event.target.value } })}
-                        placeholder="http://127.0.0.1:19095"
-                        className="mt-2 w-full rounded-2xl border border-black/10 bg-white px-3 py-2.5 font-mono text-sm outline-none focus:border-surface-500"
-                      />
-                    </label>
-                    <label className="block text-sm font-semibold text-surface-600">
-                      Worker 密钥
-                      <input
-                        type="password"
-                        value={draft.nas_config?.worker_key || ''}
-                        onChange={(event) => updateDraft({ nas_config: { ...(draft.nas_config || { name: '', base_url: '', username: '', password: '', enabled: true }), worker_key: event.target.value } })}
-                        placeholder="media-worker-2026"
-                        className="mt-2 w-full rounded-2xl border border-black/10 bg-white px-3 py-2.5 font-mono text-sm outline-none focus:border-surface-500"
-                      />
-                    </label>
-                    <p className="text-xs text-surface-400">WebDAV 凭据使用下方填写的内容：每次请求临时传给局域网 worker 使用，不落盘到 spark，用完即弃。</p>
-                  </>
-                )}
-
-                <label className="block text-sm font-semibold text-surface-600">
-                  WebDAV 地址
-                  <input
-                    value={draft.nas_config?.base_url || ''}
-                    onChange={(event) => updateDraft({ nas_config: { ...(draft.nas_config || { name: '', username: '', password: '', enabled: true }), base_url: event.target.value } })}
-                    placeholder="https://xxx.heiyu.space/dav"
-                    className="mt-2 w-full rounded-2xl border border-black/10 bg-white px-3 py-2.5 font-mono text-sm outline-none focus:border-surface-500"
-                  />
-                </label>
-
-                <div className="grid gap-4 md:grid-cols-2">
-                  <label className="block text-sm font-semibold text-surface-600">
-                    用户名
-                    <input
-                      value={draft.nas_config?.username || ''}
-                      onChange={(event) => updateDraft({ nas_config: { ...(draft.nas_config || { name: '', base_url: '', password: '', enabled: true }), username: event.target.value } })}
-                      className="mt-2 w-full rounded-2xl border border-black/10 bg-white px-3 py-2.5 text-sm outline-none focus:border-surface-500"
-                    />
-                  </label>
-                  <label className="block text-sm font-semibold text-surface-600">
-                    密码
-                    <input
-                      type="password"
-                      value={draft.nas_config?.password || ''}
-                      onChange={(event) => updateDraft({ nas_config: { ...(draft.nas_config || { name: '', base_url: '', username: '', enabled: true }), password: event.target.value } })}
-                      className="mt-2 w-full rounded-2xl border border-black/10 bg-white px-3 py-2.5 font-mono text-sm outline-none focus:border-surface-500"
-                    />
-                  </label>
-                </div>
-
-                <button
-                  type="button"
-                  onClick={testNas}
-                  disabled={testingNas}
-                  className="flex items-center gap-2 rounded-2xl border border-surface-300 bg-white px-4 py-2 text-sm font-semibold text-surface-700 transition hover:bg-surface-50 disabled:cursor-not-allowed disabled:opacity-50"
-                >
-                  {testingNas ? '测试中...' : '测试连接'}
-                </button>
-
-                {nasTestResult && (
-                  <div className={`rounded-lg px-3 py-2 text-sm break-all whitespace-pre-wrap leading-relaxed ${nasTestResult.ok ? 'bg-emerald-50 text-emerald-700' : 'bg-red-50 text-red-600'}`}>
-                    {nasTestResult.message}
-                  </div>
-                )}
-
-                <p className="rounded-lg bg-surface-50 px-3 py-2 text-xs text-surface-400">
-                  懒猫微服 WebDAV 通过 HTTP(S) 协议直接访问，无需在文件系统挂载。每个懒猫账号的 WebDAV 用户名/密码对应其自己的文件空间（用户文稿目录），因此不同用户填各自的凭据即天然隔离，无需额外配置目录路径。
-                </p>
               </div>
-            </div>
-          )}
+            )
+          })()}
 
           {section === 'image' && (
             <div>
