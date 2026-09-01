@@ -9,7 +9,7 @@ use crate::llm::LlmClient;
 use crate::models::{ChatAttachment, ChatMessage};
 
 use super::nas_tools::build_nas_credentials;
-use super::agnes_media::{
+use super::agnes_media::{is_local_media_adapter, 
     video_model_with_override, get_json, http_client, post_json, resolve_video_credentials,
 };
 use super::local_video;
@@ -828,8 +828,8 @@ impl OfficeTool for VideoGenerateTool {
                 "duration": plan.seconds,
                 "ratio": plan.aspect_ratio.clone(),
             });
-            // 本地 NAS 模式：参考图路径 + 存放路径 + WebDAV 凭据直接交给局域网 worker（数据面不出局域网）
-            if credentials.base_url.contains("/api/v3/nas") {
+            // 本地适配层：参考图路径 + 存放路径 + WebDAV 凭据随请求附带（内网状态由适配层自动识别）
+            if is_local_media_adapter(&credentials.base_url) {
                 vb["nas_inputs"] = json!(nas_refs);
                 if !nas_out.is_empty() {
                     vb["nas_out"] = json!(nas_out);

@@ -9,7 +9,7 @@ use crate::agent::tool::{OfficeTool, ToolArtifact, ToolContext, ToolResult};
 use crate::llm::LlmClient;
 use crate::models::{ChatAttachment, ChatMessage};
 
-use super::agnes_media::{http_client, image_model_with_override, post_json_url, resolve_image_credentials, AgnesCredentials};
+use super::agnes_media::{http_client, image_model_with_override, is_local_media_adapter, post_json_url, resolve_image_credentials, AgnesCredentials};
 use super::nas_tools::build_nas_credentials;
 
 pub struct ImagePromptTool;
@@ -465,7 +465,8 @@ impl OfficeTool for ImagePromptTool {
         };
 
         // 本地 NAS 模式的凭据（闭包外先算好，避免闭包内 await）
-        let nas_body = if credentials.base_url.contains("/api/v3/nas") {
+        // 本地适配层（同一 base_url，无地址区分）：自动附带数据源凭据，NAS 走不走由适配层自动识别
+        let nas_body = if is_local_media_adapter(&credentials.base_url) {
             build_nas_credentials(&ctx.user_id).await
         } else {
             None
@@ -498,8 +499,8 @@ impl OfficeTool for ImagePromptTool {
                     };
                     body["image"] = image_val;
                 }
-                // 本地 NAS 模式：参考图路径 + 存放路径 + WebDAV 凭据直接交给局域网 worker（数据面不出局域网）
-                if credentials.base_url.contains("/api/v3/nas") {
+                // 本地适配层：参考图路径 + 存放路径 + WebDAV 凭据随请求附带（内网状态由适配层自动识别）
+                if is_local_media_adapter(&credentials.base_url) {
                     body["nas_inputs"] = json!(nas_refs);
                     if !nas_out.is_empty() {
                         body["nas_out"] = json!(nas_out);

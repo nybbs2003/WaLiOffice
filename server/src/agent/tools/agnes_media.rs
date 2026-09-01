@@ -164,6 +164,14 @@ pub enum VideoVendor {
 }
 
 /// 根据 base_url 域名自动识别视频厂商
+/// 本地媒体适配层判定：请求发往自建适配层（spark1.lab207.cn 等）时，
+/// office 自动附带已配置的 WebDAV 数据源凭据（nas_sources），由适配层自动识别
+/// 内网状态决定是否走 NAS 直连——模型 base_url 无需任何区别。
+pub fn is_local_media_adapter(base_url: &str) -> bool {
+    let b = base_url.trim().to_lowercase();
+    b.contains("lab207.cn") || b.contains("127.0.0.1") || b.contains("localhost") || b.contains("192.168.")
+}
+
 pub fn detect_video_vendor(base_url: &str) -> VideoVendor {
     let base = base_url.trim().to_lowercase();
     // /api/v3 路径视为火山 v3 协议（含自建适配层，如 https://spark1.lab207.cn/api/v3）
