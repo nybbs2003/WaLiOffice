@@ -33,8 +33,10 @@ export default function Login() {
       handleFeishuCallback(code)
     } else {
       // 门户 SSO：浏览器已带 wa_session Cookie（例如先登录过门户/Office）时自动登录
-      authApi.sessionToken()
-        .then(({ data }) => {
+      // 只带 Cookie 请求（不附加 localStorage 里的旧 Bearer，避免登出后又被旧 token 拉回登录态）
+      fetch('/api/auth/session-token')
+        .then((resp) => (resp.ok ? resp.json() : Promise.reject(new Error('no session'))))
+        .then((data) => {
           login(data.access_token, data.user)
           afterLoginNavigate()
         })

@@ -25,6 +25,10 @@ export function AppLayout() {
 
   const handleLogout = () => {
     logout()
+    try {
+      localStorage.removeItem('aippt-auth')
+      localStorage.removeItem('aippt-conversation-state')
+    } catch (e) {}
     // 清除会话 Cookie（后端 302 回登录页）
     window.location.href = '/api/auth/logout'
   }

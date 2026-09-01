@@ -1,5 +1,5 @@
 import { Routes, Route } from 'react-router-dom'
-import { lazy, Suspense, useEffect } from 'react'
+import { lazy, Suspense, useEffect, useState } from 'react'
 import { useAuthStore } from '@/stores/auth-store'
 import Login from '@/pages/Login'
 import { AppLayout } from '@/components/layout/AppLayout'
@@ -22,6 +22,27 @@ function RedirectHome() {
 
 function App() {
   const isAuthenticated = useAuthStore((s) => s.isAuthenticated)
+  const logout = useAuthStore((s) => s.logout)
+  const [checking, setChecking] = useState(true)
+
+  // 以服务器 Cookie 会话为准：localStorage 里可能残留旧 token（签名仍有效但无 Cookie），
+  // 若只信 store 会在 /login ↔ / 之间与 nginx 门禁形成无限跳转。
+  useEffect(() => {
+    if (!isAuthenticated) {
+      setChecking(false)
+      return
+    }
+    // 不带 Authorization 头 → 服务端只校验 wa_session Cookie
+    fetch('/api/auth/session-check')
+      .then((resp) => {
+        if (!resp.ok) logout()
+      })
+      .catch(() => logout())
+      .finally(() => setChecking(false))
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [])
+
+  if (checking) return <Loading />
 
   if (!isAuthenticated) {
     return (
