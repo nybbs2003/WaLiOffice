@@ -69,6 +69,7 @@ export function useMeetingRecorder(onComplete: (transcript: string) => void) {
   const minutesTimerRef = useRef<number | null>(null)
   const minutesBusyRef = useRef(false)
   const lastVersionRef = useRef(0)
+  const stableCounterRef = useRef(0)
   const stoppedRef = useRef(false)
   const completedRef = useRef(false)
   const stateRef = useRef(state)
@@ -117,6 +118,9 @@ export function useMeetingRecorder(onComplete: (transcript: string) => void) {
       const changed = d.version !== lastVersionRef.current || d.text !== stateRef.current.liveTranscript
       lastVersionRef.current = d.version
       if (changed) {
+        stableCounterRef.current = 0
+      }
+      if (changed) {
         setState((s) => ({ ...s, liveTranscript: d.text }))
         // 防抖触发增量纪要（转写安静 12s 后更新）
         if (d.text.trim()) {
@@ -142,17 +146,21 @@ export function useMeetingRecorder(onComplete: (transcript: string) => void) {
       if (stoppedRef.current && !completedRef.current) {
         const queueEmpty = lsAllStreams().filter((x) => x.sid === sid).length === 0
         if (queueEmpty && !d.transcribing && d.text.trim()) {
-          // 连续两轮稳定才算收敛
-          const stable = lastVersionRef.current === d.version
-          if (stable) {
-            completedRef.current = true
-            const finalRes = await audioApi.streamFinish(sid).catch(() => null)
-            const finalText = finalRes?.data?.text || d.text
-            const finalMinutes = stateRef.current.minutes
-            setState((s) => ({ ...s, liveTranscript: finalText, phase: 'processing' }))
-            onComplete(finalText + (finalMinutes ? '\n\n【实时纪要】\n' + finalMinutes : ''))
+          // 连续两轮（跨轮次）版本不变才算收敛
+          if (stableCounterRef.current < 1) {
+            stableCounterRef.current += 1
             return
           }
+          completedRef.current = true
+          const finalRes = await audioApi.streamFinish(sid).catch(() => null)
+          const finalText = finalRes?.data?.text || d.text
+          const finalMinutes = stateRef.current.minutes
+          const combined = finalText + (finalMinutes ? '\n\n【实时纪要】\n' + finalMinutes : '')
+          setState((s) => ({ ...s, liveTranscript: finalText, phase: 'idle', minutes: finalMinutes }))
+          sidRef.current = null
+          if (pollRef.current) window.clearInterval(pollRef.current)
+          onComplete(combined)
+          return
         }
       }
     } catch {
@@ -165,6 +173,7 @@ export function useMeetingRecorder(onComplete: (transcript: string) => void) {
     stoppedRef.current = false
     completedRef.current = false
     lastVersionRef.current = 0
+    stableCounterRef.current = 0
     const sid = `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`
     sidRef.current = sid
     setState({ phase: 'recording', seconds: 0, liveTranscript: '', minutes: '', pendingCount: stateRef.current.pendingCount, error: null })

@@ -48,6 +48,31 @@ fn relay_headers(cfg: &NasConfig) -> Vec<(String, String)> {
     ]
 }
 
+/// 字节版 worker 请求（音频等二进制：不经过 UTF-8 转换）
+async fn worker_request_bytes(
+    cfg: &NasConfig,
+    method: &str,
+    url: &str,
+    body: Option<Vec<u8>>,
+) -> anyhow::Result<(u16, Vec<u8>)> {
+    let client = reqwest::Client::builder()
+        .timeout(std::time::Duration::from_secs(900))
+        .build()?;
+    let mut req = client
+        .request(reqwest::Method::from_bytes(method.as_bytes())?, url)
+        .header("Authorization", format!("Bearer {}", relay_worker_key()))
+        .header("X-NAS-Base", cfg.base_url.clone())
+        .header("X-NAS-User", cfg.username.clone())
+        .header("X-NAS-Pass", cfg.password.clone());
+    if let Some(b) = body {
+        req = req.body(b);
+    }
+    let resp = req.send().await?;
+    let status = resp.status().as_u16();
+    let bytes = resp.bytes().await?.to_vec();
+    Ok((status, bytes))
+}
+
 /// 经 worker 控制面发 HTTP 请求。
 /// NAS 的 WebDAV 凭据来自 office 数据源配置（用户已在设置里填好），
 /// 通过请求头传给 worker 逐次使用——凭据不落盘到 spark，用完即弃。
@@ -96,6 +121,43 @@ pub async fn enabled_nas_sources(user_id: &str) -> Vec<NasConfig> {
     out
 }
 
+/// 二进制写入（音频等）：直连优先，失败自动降级 worker 中继。字节不经过 UTF-8 转换。
+async fn dav_write_bytes(cfg: &NasConfig, rel_path: &str, bytes: &[u8]) -> anyhow::Result<()> {
+    let full_path = sanitize_path(rel_path)?;
+    // 直连
+    let url = join_url(&cfg.base_url, &full_path);
+    if dav_http_request_bytes("PUT", &url, &cfg.username, &cfg.password, bytes)
+        .map(|(s, _)| (200..300).contains(&s))
+        .unwrap_or(false)
+    {
+        return Ok(());
+    }
+    // 中继
+    let wurl = format!("{}/nas/put?path={}", relay_worker_url().trim_end_matches('/'), full_path);
+    let (status, resp) = worker_request_bytes(cfg, "PUT", &wurl, Some(bytes.to_vec())).await?;
+    if status != 200 {
+        return Err(anyhow::anyhow!("worker 写入失败（HTTP {status}）: {}", String::from_utf8_lossy(&resp).chars().take(300).collect::<String>()));
+    }
+    Ok(())
+}
+
+/// 二进制读取（音频等）：直连优先，失败自动降级 worker 中继。
+async fn dav_read_bytes(cfg: &NasConfig, rel_path: &str) -> anyhow::Result<Vec<u8>> {
+    let full_path = sanitize_path(rel_path)?;
+    let url = join_url(&cfg.base_url, &full_path);
+    if let Ok((status, bytes)) = dav_http_request_bytes("GET", &url, &cfg.username, &cfg.password, b"") {
+        if (200..300).contains(&status) {
+            return Ok(bytes);
+        }
+    }
+    let wurl = format!("{}/nas/get?path={}", relay_worker_url().trim_end_matches('/'), full_path);
+    let (status, bytes) = worker_request_bytes(cfg, "GET", &wurl, None).await?;
+    if status != 200 {
+        return Err(anyhow::anyhow!("worker 读取失败（HTTP {status}）"));
+    }
+    Ok(bytes)
+}
+
 /// 供路由层使用：把二进制内容写入用户的第一个可用数据源（自动直连/中继路由）。
 pub async fn write_file_for_user(user_id: &str, rel_path: &str, bytes: &[u8]) -> anyhow::Result<String> {
     let sources = enabled_nas_sources(user_id).await;
@@ -105,8 +167,7 @@ pub async fn write_file_for_user(user_id: &str, rel_path: &str, bytes: &[u8]) ->
     // 依次尝试每个源（直连失败自动降级中继由 dav_write 内部处理）
     let mut last_err = None;
     for cfg in &sources {
-        let content = String::from_utf8_lossy(bytes).to_string();
-        match dav_write(cfg, rel_path, &content).await {
+        match dav_write_bytes(cfg, rel_path, bytes).await {
             Ok(()) => return Ok(format!("{}:{rel_path}", if cfg.name.is_empty() { cfg.base_url.clone() } else { cfg.name.clone() })),
             Err(e) => last_err = Some(e),
         }
@@ -122,8 +183,8 @@ pub async fn read_file_for_user(user_id: &str, rel_path: &str) -> anyhow::Result
     }
     let mut last_err = None;
     for cfg in &sources {
-        match dav_read(cfg, rel_path).await {
-            Ok((text, _ctype)) => return Ok(text.into_bytes()),
+        match dav_read_bytes(cfg, rel_path).await {
+            Ok(bytes) => return Ok(bytes),
             Err(e) => last_err = Some(e),
         }
     }
@@ -309,6 +370,96 @@ fn dav_http_request(
     };
 
     Ok((status, body))
+}
+
+/// 字节版直连 WebDAV HTTP 请求（音频等二进制：body/响应均为原始字节）
+fn dav_http_request_bytes(
+    method: &str,
+    url: &str,
+    username: &str,
+    password: &str,
+    body: &[u8],
+) -> anyhow::Result<(u16, Vec<u8>)> {
+    use std::io::{Read, Write};
+
+    let url = url.trim();
+    let (scheme, rest) = url
+        .split_once("://")
+        .ok_or_else(|| anyhow::anyhow!("非法 URL（缺少协议）: {url}"))?;
+    if scheme != "https" && scheme != "http" {
+        return Err(anyhow::anyhow!("仅支持 http/https 协议: {scheme}"));
+    }
+    let (host, path) = rest
+        .split_once('/')
+        .map(|(h, p)| (h, format!("/{p}")))
+        .unwrap_or((rest, "/".to_string()));
+    let (host, port) = if let Some((h, p)) = host.split_once(':') {
+        (h.to_string(), p.parse::<u16>()?)
+    } else {
+        (host.to_string(), if scheme == "https" { 443 } else { 80 })
+    };
+    let auth = base64::encode(format!("{username}:{password}"));
+
+    let mut req = format!(
+        "{method} {path} HTTP/1.1\r\nHost: {host}\r\nAuthorization: Basic {auth}\r\nConnection: close\r\n"
+    )
+    .into_bytes();
+    req.extend_from_slice(format!("Content-Length: {}\r\n\r\n", body.len()).as_bytes());
+    req.extend_from_slice(body);
+
+    let mut resp = Vec::new();
+    if scheme == "https" {
+        let mut ssl = connect_dav_tls(&host, port)?;
+        ssl.write_all(&req)?;
+        ssl.read_to_end(&mut resp)?;
+    } else {
+        let mut stream = std::net::TcpStream::connect((host.as_str(), port))?;
+        stream.set_read_timeout(Some(std::time::Duration::from_secs(60)))?;
+        stream.set_write_timeout(Some(std::time::Duration::from_secs(60)))?;
+        stream.write_all(&req)?;
+        stream.read_to_end(&mut resp)?;
+    }
+
+    // 解析状态码与 body（字节安全）
+    let sep = resp.windows(4).position(|w| w == b"\r\n\r\n").unwrap_or(resp.len());
+    let head = String::from_utf8_lossy(&resp[..sep]).to_string();
+    let status = head
+        .lines()
+        .next()
+        .and_then(|l| l.split_whitespace().nth(1))
+        .and_then(|s| s.parse::<u16>().ok())
+        .ok_or_else(|| anyhow::anyhow!("无法解析 HTTP 状态行: {}", head.chars().take(80).collect::<String>()))?;
+    let body_bytes = if head.to_lowercase().contains("transfer-encoding: chunked") {
+        decode_chunked_bytes(&resp[sep + 4..])
+    } else {
+        resp[sep + 4..].to_vec()
+    };
+    Ok((status, body_bytes))
+}
+
+fn decode_chunked_bytes(data: &[u8]) -> Vec<u8> {
+    let mut out = Vec::new();
+    let mut i = 0;
+    while i < data.len() {
+        let line_end = data[i..]
+            .windows(2)
+            .position(|w| w == b"\r\n")
+            .map(|p| i + p)
+            .unwrap_or(data.len());
+        let size_str = String::from_utf8_lossy(&data[i..line_end]);
+        let size = usize::from_str_radix(size_str.trim(), 16).unwrap_or(0);
+        if size == 0 {
+            break;
+        }
+        i = line_end + 2;
+        if i + size + 2 <= data.len() {
+            out.extend_from_slice(&data[i..i + size]);
+            i += size + 2;
+        } else {
+            break;
+        }
+    }
+    out
 }
 
 /// 解码 HTTP chunked 编码的 body

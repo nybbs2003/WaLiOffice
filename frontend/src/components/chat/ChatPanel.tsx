@@ -401,6 +401,16 @@ export function ChatPanel({
     }
   }
 
+  // 组件卸载时停止播放（避免后台继续出声）
+  useEffect(() => {
+    return () => {
+      if (audioRef.current) {
+        audioRef.current.pause()
+        audioRef.current = null
+      }
+    }
+  }, [])
+
   const stopTts = () => {
     if (audioRef.current) {
       audioRef.current.pause()
