@@ -556,12 +556,15 @@ impl OfficeTool for VideoGenerateTool {
                 },
                 "nas_refs": {
                     "type": "array",
-                    "items": { "type": "string" },
-                    "description": "NAS（懒猫网盘）中的参考图相对路径列表（1-2 张，用于图生视频首尾帧），本地算力模式下直接在局域网读取；可先用 nas_list 工具浏览"
+                    "description": "NAS 中的参考图列表（1-2 张，用于图生视频首尾帧）。每项可以是路径字符串，或 {source: 数据源名, path: 相对路径} 对象——参考图可来自任意数据源（局域网/远端均可），与成品存放位置互相独立；可先用 nas_list 工具浏览"
                 },
                 "nas_out": {
                     "type": "string",
-                    "description": "生成视频在 NAS（懒猫网盘）上的存放路径（相对网盘根目录，可带文件名）。用户指定保存位置时必须传入；未指定则存到网盘根目录"
+                    "description": "生成视频的存放路径（相对目的数据源根目录，可带文件名）。用户指定保存位置时必须传入；未指定则存到目的数据源根目录"
+                },
+                "nas_out_source": {
+                    "type": "string",
+                    "description": "目的数据源名称（可选）：指定成品存到哪个 WebDAV 数据源（局域网或远端均可）；未指定时自动选局域网可达源，其次第一个可达源"
                 },
                 "video_urls": {
                     "type": "array",
@@ -814,6 +817,11 @@ impl OfficeTool for VideoGenerateTool {
             .and_then(|v| v.as_str())
             .map(|v| v.trim().to_string())
             .unwrap_or_default();
+        let nas_out_source = input
+            .get("nas_out_source")
+            .and_then(|v| v.as_str())
+            .map(|v| v.trim().to_string())
+            .unwrap_or_default();
         // 请求体：按厂商分派（Agnes 用 prompt/seconds/aspect_ratio；火山方舟用 content 数组）
         let mut request_body = if is_volc {
             // 火山方舟 Seedance：content 数组（text + 图片参考）+ resolution + duration + ratio
@@ -833,6 +841,9 @@ impl OfficeTool for VideoGenerateTool {
                 vb["nas_inputs"] = json!(nas_refs);
                 if !nas_out.is_empty() {
                     vb["nas_out"] = json!(nas_out);
+                }
+                if !nas_out_source.is_empty() {
+                    vb["nas_out_source"] = json!(nas_out_source);
                 }
                 if let Some(nas_body) = build_nas_credentials(&ctx.user_id).await {
                     vb["nas_sources"] = nas_body;
