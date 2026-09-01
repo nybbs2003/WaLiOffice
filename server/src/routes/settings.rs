@@ -764,6 +764,57 @@ async fn test_sse_mcp_service(
     })))
 }
 
+/// 从 base_url 结构自适应推导「模型列表」候选端点（通用，不绑定厂商）。
+fn model_endpoint_candidates(base_url: &str) -> Vec<String> {
+    let base = base_url.trim().trim_end_matches('/');
+    let (origin, path) = split_origin_path(base);
+    let mut cands: Vec<String> = Vec::new();
+    cands.push(format!("{base}/models"));
+    cands.push(format!("{base}/v1/models"));
+    // base 路径里的 API 前缀段：/api/xxx 取前两段（/api/v3、/api/paas、/api/v4…）
+    if let Some(api_idx) = path.find("/api/") {
+        let rest = &path[api_idx..];
+        let segs: Vec<&str> = rest.split('/').filter(|s| !s.is_empty()).collect();
+        if !segs.is_empty() {
+            let prefix = if segs.len() >= 2 {
+                format!("/{}/{}", segs[0], segs[1])
+            } else {
+                "/api".to_string()
+            };
+            cands.push(format!("{origin}{prefix}/models"));
+        }
+    }
+    // base 里出现的其它版本段（/v1、/v2、/v3…）也作为前缀候选
+    if let Some(v_idx) = path.find("/v") {
+        let rest = &path[v_idx..];
+        let segs: Vec<&str> = rest.split('/').filter(|s| !s.is_empty()).collect();
+        if !segs.is_empty() && segs[0].len() <= 4 && segs[0][1..].chars().all(|c| c.is_ascii_digit()) {
+            cands.push(format!("{origin}/{}/models", segs[0]));
+        }
+    }
+    if !path.is_empty() {
+        cands.push(format!("{origin}/models"));
+        cands.push(format!("{origin}/v1/models"));
+    }
+    let mut seen = std::collections::HashSet::new();
+    cands.retain(|c| seen.insert(c.clone()));
+    cands
+}
+
+/// 把 URL 拆成 origin（scheme://host[:port]）与 path（以 / 开头，可为空）。
+fn split_origin_path(base: &str) -> (&str, &str) {
+    match base.find("://") {
+        Some(i) => {
+            let rest = &base[i + 3..];
+            match rest.find('/') {
+                Some(j) => (&base[..i + 3 + j], &rest[j..]),
+                None => (base, ""),
+            }
+        }
+        None => (base, ""),
+    }
+}
+
 /// 拉取 LLM 服务的真实模型列表（OpenAI 兼容 /models 接口）
 async fn fetch_models(
     _user: AuthUser,
@@ -779,23 +830,12 @@ async fn fetch_models(
         .build()
         .map_err(|e| AppError::Internal(anyhow::anyhow!("构建 HTTP 客户端失败: {e}")))?;
 
-    // 兼容不同的 /models 路径：{base}/models → {base}/v1/models；火山方舟走 /api/v3/models
-    let is_ark = base_url.contains("volces.com") || base_url.contains("ark.cn");
-    let ark_base = if is_ark {
-        let b = base_url
-            .trim_end_matches("/images/generations")
-            .trim_end_matches("/contents/generations/tasks");
-        if b.contains("/api/v3") { b.to_string() } else { format!("{b}/api/v3") }
-    } else {
-        String::new()
-    };
-    let mut endpoints = vec![
-        format!("{base_url}/models"),
-        format!("{base_url}/v1/models"),
-    ];
-    if is_ark {
-        endpoints.push(format!("{ark_base}/models"));
-    }
+    // 通用端点推导：不绑定任何厂商。
+    // 1) OpenAI 兼容：{base}/models、{base}/v1/models
+    // 2) 若 base 本身带 API 前缀（如 /api/v3、/api/paas/v4、/v1…），
+    //    尝试 {origin}{前缀}/models（从 base 结构自适应，而不是写死 v3）
+    // 3) origin 级兜底：{origin}/models、{origin}/v1/models
+    let endpoints = model_endpoint_candidates(&base_url);
 
     let mut last_err: Option<String> = None;
     let mut models: Vec<String> = Vec::new();
@@ -816,9 +856,9 @@ async fn fetch_models(
                     if let Some(arr) = json.get("data").and_then(|v| v.as_array()) {
                         for item in arr {
                             if let Some(id) = item.get("id").and_then(|v| v.as_str()) {
-                                // 火山方舟：跳过已下线（Shutdown）的模型
-                                let status = item.get("status").and_then(|v| v.as_str()).unwrap_or("");
-                                if status.eq_ignore_ascii_case("shutdown") {
+                                // 跳过已下线/弃用的模型（不同厂商状态值不同，统一小写判断）
+                                let status = item.get("status").and_then(|v| v.as_str()).unwrap_or("").to_lowercase();
+                                if matches!(status.as_str(), "shutdown" | "offline" | "deprecated" | "disabled" | "inactive") {
                                     continue;
                                 }
                                 if !id.is_empty() && !models.contains(&id.to_string()) {
