@@ -18,8 +18,8 @@ pub async fn find_by_username(pool: &DbPool, username: &str) -> AppResult<Option
             let email: Option<String> = r.try_get(3)?;
             let password_hash: String = r.try_get(4)?;
             let avatar: Option<String> = r.try_get(5)?;
-            let role: String = r.try_get(6)?;
-            let nickname: Option<String> = r.try_get(7).ok().flatten();
+            let nickname: Option<String> = r.try_get(6).ok().flatten();
+            let role: String = r.try_get(7)?;
             Ok(Some((
                 User { id, tenant_id, username, email, avatar, nickname, role },
                 password_hash,
