@@ -1850,6 +1850,7 @@ export default function Studio() {
             projects={projects}
             activeProjectId={activeProjectId}
             userName={useAuthStore.getState().user?.username}
+            user={useAuthStore.getState().user}
             activeTool={activeTool}
             activeConversationId={sessionId}
             isStreaming={isStreaming}
@@ -1888,6 +1889,7 @@ export default function Studio() {
                 projects={projects}
                 activeProjectId={activeProjectId}
                 userName={useAuthStore.getState().user?.username}
+            user={useAuthStore.getState().user}
                 activeTool={activeTool}
                 activeConversationId={sessionId}
                 isStreaming={isStreaming}

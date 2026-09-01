@@ -2,6 +2,7 @@ import { Bot, BrainCircuit, ChevronDown, Clapperboard, Edit3, FileText, Folder, 
 import { useEffect, useMemo, useState } from 'react'
 import type { CSSProperties, DragEvent } from 'react'
 import { useLocation, useNavigate } from 'react-router-dom'
+import { feishuAvatarColor, feishuAvatarInitial } from '@/types'
 import type { ChatMessage, ConversationRecord, PPTProject, ToolKind, ProjectMeta } from '@/types'
 
 const LOGO_URL = '/logo.png'
@@ -13,6 +14,8 @@ interface ConversationSidebarProps {
   projects: ProjectMeta[]
   activeProjectId: string | null
   userName?: string
+  /** 当前登录用户（含飞书昵称/头像） */
+  user?: { username?: string; nickname?: string; avatar?: string } | null
   activeTool: ToolKind
   activeConversationId?: string | null
   isStreaming?: boolean
@@ -103,6 +106,7 @@ export function ConversationSidebar({
   projects,
   activeProjectId,
   userName,
+  user,
   activeTool,
   activeConversationId,
   isStreaming = false,
@@ -647,11 +651,29 @@ export function ConversationSidebar({
           })}
         </div>
         <div className="flex items-center gap-2 rounded-2xl bg-white/64 px-3 py-2 shadow-sm backdrop-blur">
-          <div className="flex h-8 w-8 items-center justify-center rounded-full bg-surface-950 text-xs font-bold text-white">
-            {userName?.[0]?.toUpperCase() || 'U'}
-          </div>
+          {(() => {
+            const displayName = (user?.nickname || userName || 'User').trim()
+            if (user?.avatar) {
+              return (
+                <img
+                  src={user.avatar}
+                  alt={displayName}
+                  referrerPolicy="no-referrer"
+                  className="h-8 w-8 shrink-0 rounded-full object-cover ring-1 ring-black/[0.06]"
+                />
+              )
+            }
+            return (
+              <div
+                className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full text-xs font-bold text-white"
+                style={{ backgroundColor: feishuAvatarColor(displayName) }}
+              >
+                {feishuAvatarInitial(displayName)}
+              </div>
+            )
+          })()}
           <div className="min-w-0 flex-1">
-            <div className="truncate text-xs font-bold text-surface-900">{userName || 'User'}</div>
+            <div className="truncate text-xs font-bold text-surface-900">{(user?.nickname || userName || 'User').trim()}</div>
             <div className="truncate text-[10px] font-medium text-surface-500">个人办公空间</div>
           </div>
           <button

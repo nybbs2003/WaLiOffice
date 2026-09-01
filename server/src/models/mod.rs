@@ -7,6 +7,9 @@ pub struct User {
     pub username: String,
     pub email: Option<String>,
     pub avatar: Option<String>,
+    /// 飞书昵称（展示用；无昵称时回退 username）
+    #[serde(default)]
+    pub nickname: Option<String>,
     pub role: String,
 }
 

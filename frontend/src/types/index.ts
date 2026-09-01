@@ -270,7 +270,23 @@ export interface User {
   username: string;
   email?: string;
   avatar?: string;
+  /** 飞书昵称（展示用） */
+  nickname?: string;
   role?: string;
+}
+
+// ===== 飞书风格头像（无头像图片时：按昵称哈希取底色 + 首字）=====
+const FEISHU_AVATAR_COLORS = ['#5B8FF9', '#61DDAA', '#65789B', '#F6BD16', '#7262FD', '#78D3F8', '#9661BC', '#F6903D', '#008685', '#F08BB4'];
+export function feishuAvatarColor(name: string): string {
+  let h = 0;
+  for (let i = 0; i < name.length; i++) {
+    h = (h * 31 + name.charCodeAt(i)) >>> 0;
+  }
+  return FEISHU_AVATAR_COLORS[h % FEISHU_AVATAR_COLORS.length];
+}
+export function feishuAvatarInitial(name: string): string {
+  const n = (name || '').trim();
+  return (n.charAt(0) || 'U').toUpperCase();
 }
 
 // ===== 租户 =====

@@ -2,6 +2,7 @@ import { NavLink, Outlet, useNavigate } from 'react-router-dom'
 import {
   Bell, Files, LogOut, Sparkles, Github, ShieldCheck
 } from 'lucide-react'
+import { feishuAvatarColor, feishuAvatarInitial } from '@/types'
 import { useAuthStore } from '@/stores/auth-store'
 
 const LOGO_URL = '/logo.png'

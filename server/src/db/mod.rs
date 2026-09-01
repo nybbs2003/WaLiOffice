@@ -68,6 +68,7 @@ async fn run_migrations_sqlite(pool: &sqlx::SqlitePool) -> Result<()> {
 
     // 多租户增量迁移：为旧表补充 tenant_id 列（若不存在）
     ensure_sqlite_column(pool, "users", "tenant_id", "TEXT").await?;
+    ensure_sqlite_column(pool, "users", "nickname", "TEXT").await?;
     ensure_sqlite_column(pool, "projects", "tenant_id", "TEXT").await?;
     ensure_sqlite_column(pool, "sessions", "tenant_id", "TEXT").await?;
     ensure_sqlite_column(pool, "tasks", "tenant_id", "TEXT").await?;
@@ -164,6 +165,7 @@ async fn run_mysql_incremental(pool: &sqlx::MySqlPool) -> Result<()> {
     // 逐表补充 tenant_id 列（MySQL 支持 ADD COLUMN IF NOT EXISTS 从 8.0.29 起，
     // 为兼容旧版本，先查 information_schema 再决定是否 ADD）
     ensure_mysql_column(pool, "users", "tenant_id", "VARCHAR(36) NULL").await?;
+    ensure_mysql_column(pool, "users", "nickname", "VARCHAR(128) NULL").await?;
     ensure_mysql_column(pool, "projects", "tenant_id", "VARCHAR(36) NULL").await?;
     ensure_mysql_column(pool, "sessions", "tenant_id", "VARCHAR(36) NULL").await?;
     ensure_mysql_column(pool, "tasks", "tenant_id", "VARCHAR(36) NULL").await?;

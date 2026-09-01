@@ -366,25 +366,36 @@ async fn feishu_login(
         .and_then(|v| v.as_str())
         .unwrap_or("feishu_user")
         .to_string();
+    // 头像：优先小图（thumb），依次回退 middle / url / big
+    let avatar = ["avatar_thumb", "avatar_middle", "avatar_url", "avatar_big"]
+        .iter()
+        .find_map(|k| data.get(*k).and_then(|v| v.as_str()).filter(|v| !v.is_empty()))
+        .map(str::to_string);
 
     // 3. 按 open_id 找或建用户（username 形如 feishu_{open_id}）
     let pool = state::db_pool();
     let username = format!("feishu_{open_id}");
     let user = match user_repo::find_by_username(&pool, &username).await? {
-        Some((user, _)) => user,
+        Some((user, _)) => {
+            // 已存在：登录时刷新飞书昵称 + 头像
+            match user_repo::update_profile(&pool, &user.id, Some(&name), avatar.as_deref()).await? {
+                Some(updated) => updated,
+                None => user,
+            }
+        }
         None => {
             // 新建：若带 tenant_id 则归属该租户；否则自动建个人租户
             let hash = user_repo::hash_password(&uuid::Uuid::new_v4().to_string())?;
             if let Some(tenant_id) = req.tenant_id.as_deref() {
-                user_repo::create_with_tenant(&pool, &username, None, &hash, Some(tenant_id), "member").await?
+                user_repo::create_with_profile(&pool, &username, None, &hash, Some(tenant_id), "member", Some(&name), avatar.as_deref()).await?
             } else {
                 let count = user_repo::count(&pool).await.unwrap_or(0);
                 if count == 0 {
-                    user_repo::create_with_tenant(&pool, &username, None, &hash, None, "super_admin").await?
+                    user_repo::create_with_profile(&pool, &username, None, &hash, None, "super_admin", Some(&name), avatar.as_deref()).await?
                 } else {
                     let slug = format!("tenant-{}", uuid::Uuid::new_v4().simple());
                     let tenant = tenant_repo::create(&pool, &name, &slug, "free").await?;
-                    user_repo::create_with_tenant(&pool, &username, None, &hash, Some(&tenant.id), "tenant_admin").await?
+                    user_repo::create_with_profile(&pool, &username, None, &hash, Some(&tenant.id), "tenant_admin", Some(&name), avatar.as_deref()).await?
                 }
             }
         }
