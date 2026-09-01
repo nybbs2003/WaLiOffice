@@ -40,6 +40,47 @@ fn feishu_err_to_result(err: anyhow::Error, scope: &str) -> ToolResult {
     }
 }
 
+/// 简化 JSON 数组 → Markdown 表格（产物供用户在右边栏/我的文件直接阅读，不再是一坨 JSON）
+fn json_array_to_markdown(rows: &[serde_json::Value], title: &str) -> String {
+    let mut md = format!("# {title}\n\n");
+    if rows.is_empty() {
+        md.push_str("（无内容）\n");
+        return md;
+    }
+    let mut cols: Vec<String> = Vec::new();
+    if let Some(first) = rows.first().and_then(|r| r.as_object()) {
+        cols = first.keys().take(6).cloned().collect();
+    }
+    if cols.is_empty() {
+        md.push_str("```json\n");
+        md.push_str(&serde_json::to_string_pretty(rows).unwrap_or_default());
+        md.push_str("\n```\n");
+        return md;
+    }
+    md.push_str(&format!("| {} |\n", cols.join(" | ")));
+    md.push_str(&format!("| {} |\n", cols.iter().map(|_| "---").collect::<Vec<_>>().join(" | ")));
+    for row in rows {
+        let obj = match row.as_object() {
+            Some(o) => o,
+            None => {
+                md.push_str(&format!("| {} |\n", row.to_string().replace('|', "\\|")));
+                continue;
+            }
+        };
+        let cells: Vec<String> = cols.iter().map(|k| {
+            obj.get(k).map(|v| match v {
+                serde_json::Value::String(x) => x.clone(),
+                serde_json::Value::Null => String::new(),
+                other => other.to_string(),
+            }).unwrap_or_default()
+            .replace('|', "\\|")
+            .replace('\n', " ")
+        }).collect();
+        md.push_str(&format!("| {} |\n", cells.join(" | ")));
+    }
+    md
+}
+
 /// 需要授权的结果：缺少的 scope
 #[derive(Debug, Clone)]
 pub struct NeedsAuth {
@@ -300,18 +341,18 @@ impl OfficeTool for FeishuBitableQueryTool {
         };
         match do_query_bitable(&token, app_token, table_id, page_size).await {
             Ok(records) => {
-                let json_str = serde_json::to_string_pretty(&records).unwrap_or_default();
+                let md_str = json_array_to_markdown(&records, "飞书多维表格记录");
                 let artifact = ToolArtifact {
                     kind: "markdown".into(),
                     title: format!("飞书表格记录 · {table_id}"),
-                    content: json!({ "type": "markdown", "markdown": json_str, "source": "feishu_bitable" }),
+                    content: json!({ "type": "markdown", "markdown": md_str, "source": "feishu_bitable" }),
                 };
                 ToolResult {
                     success: true,
                     data: Some(json!({ "records": records })),
                     error: None,
                     artifacts: Some(vec![artifact]),
-                    observation: format!("飞书多维表格记录如下：\n{json_str}"),
+                    observation: format!("飞书多维表格记录如下：\n{md_str}"),
                     needs_auth: None,
                     continue_loop: None,
                 }
@@ -398,18 +439,18 @@ impl OfficeTool for FeishuCalendarListTool {
         };
         match do_list_events(&token, calendar_id, start_time, end_time).await {
             Ok(events) => {
-                let json_str = serde_json::to_string_pretty(&events).unwrap_or_default();
+                let md_str = json_array_to_markdown(&events, "飞书日历日程");
                 let artifact = ToolArtifact {
                     kind: "markdown".into(),
                     title: "飞书日历日程".into(),
-                    content: json!({ "type": "markdown", "markdown": json_str, "source": "feishu_calendar" }),
+                    content: json!({ "type": "markdown", "markdown": md_str, "source": "feishu_calendar" }),
                 };
                 ToolResult {
                     success: true,
                     data: Some(json!({ "events": events })),
                     error: None,
                     artifacts: Some(vec![artifact]),
-                    observation: format!("飞书日历日程如下：\n{json_str}"),
+                    observation: format!("飞书日历日程如下：\n{md_str}"),
                     needs_auth: None,
                     continue_loop: None,
                 }
@@ -770,18 +811,18 @@ impl OfficeTool for FeishuDriveListTool {
         };
         match do_list_drive(&token, folder_token).await {
             Ok(files) => {
-                let json_str = serde_json::to_string_pretty(&files).unwrap_or_default();
+                let md_str = json_array_to_markdown(&files, "飞书云盘文件列表");
                 let artifact = ToolArtifact {
                     kind: "markdown".into(),
                     title: "飞书云盘文件列表".into(),
-                    content: json!({ "type": "markdown", "markdown": json_str, "source": "feishu_drive" }),
+                    content: json!({ "type": "markdown", "markdown": md_str, "source": "feishu_drive" }),
                 };
                 ToolResult {
                     success: true,
                     data: Some(json!({ "files": files })),
                     error: None,
                     artifacts: Some(vec![artifact]),
-                    observation: format!("飞书云盘文件列表：\n{json_str}"),
+                    observation: format!("飞书云盘文件列表：\n{md_str}"),
                     needs_auth: None,
                     continue_loop: None,
                 }
@@ -873,18 +914,18 @@ impl OfficeTool for FeishuWikiSearchTool {
         };
         match do_search_wiki(&token, query).await {
             Ok(nodes) => {
-                let json_str = serde_json::to_string_pretty(&nodes).unwrap_or_default();
+                let md_str = json_array_to_markdown(&nodes, "飞书知识库搜索结果");
                 let artifact = ToolArtifact {
                     kind: "markdown".into(),
                     title: format!("知识库搜索 · {query}"),
-                    content: json!({ "type": "markdown", "markdown": json_str, "source": "feishu_wiki" }),
+                    content: json!({ "type": "markdown", "markdown": md_str, "source": "feishu_wiki" }),
                 };
                 ToolResult {
                     success: true,
                     data: Some(json!({ "nodes": nodes })),
                     error: None,
                     artifacts: Some(vec![artifact]),
-                    observation: format!("知识库搜索结果：\n{json_str}"),
+                    observation: format!("知识库搜索结果：\n{md_str}"),
                     needs_auth: None,
                     continue_loop: None,
                 }
