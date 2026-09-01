@@ -50,8 +50,8 @@ pub async fn find_by_id(pool: &DbPool, id: &str) -> AppResult<Option<User>> {
                 username: r.try_get(2)?,
                 email: r.try_get(3)?,
                 avatar: r.try_get(4)?,
-                nickname: r.try_get(6).ok().flatten(),
-                role: r.try_get(5)?,
+                nickname: r.try_get(5).ok().flatten(),
+                role: r.try_get(6)?,
             };
             Ok(Some(user))
         }
@@ -227,8 +227,8 @@ pub async fn list_by_tenant(pool: &DbPool, tenant_id: &str) -> AppResult<Vec<Use
             username: r.try_get(2)?,
             email: r.try_get(3)?,
             avatar: r.try_get(4)?,
-            nickname: r.try_get(6).ok().flatten(),
-            role: r.try_get(5)?,
+            nickname: r.try_get(5).ok().flatten(),
+            role: r.try_get(6)?,
         });
     }
     Ok(result)
