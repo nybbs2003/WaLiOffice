@@ -1,5 +1,6 @@
 import { Check, KeyRound, Plus, Trash2, X, Cpu, Search, Loader2, HardDrive, Image as ImageIcon, Video as VideoIcon } from 'lucide-react'
 import { ModelCombobox } from './ModelCombobox'
+import type { ModelOptionItem } from './ModelCombobox'
 import { useEffect, useMemo, useState } from 'react'
 import { settingsApi } from '@/api'
 import type { AppSettings, LLMProfile, MCPServiceConfig, MediaProfileConfig } from '@/types'
@@ -100,9 +101,9 @@ export function SettingsDialog({ open, settings, onClose, onSave }: SettingsDial
   const [llmTestResult, setLlmTestResult] = useState<Record<string, { ok: boolean; message: string } | null>>({})
   const [fetchingModelProfile, setFetchingModelProfile] = useState<string | null>(null)
   const [fetchModelError, setFetchModelError] = useState('')
-  const [fetchedModelsMap, setFetchedModelsMap] = useState<Record<string, string[]>>({})
+  const [fetchedModelsMap, setFetchedModelsMap] = useState<Record<string, ModelOptionItem[]>>({})
   // 媒体（图片/视频）模型的拉取状态与缓存（key = kind:profileId）
-  const [fetchedMediaModels, setFetchedMediaModels] = useState<Record<string, string[]>>({})
+  const [fetchedMediaModels, setFetchedMediaModels] = useState<Record<string, ModelOptionItem[]>>({})
   const [fetchingMediaKey, setFetchingMediaKey] = useState<string | null>(null)
   const [mediaFetchError, setMediaFetchError] = useState('')
 
@@ -253,9 +254,25 @@ export function SettingsDialog({ open, settings, onClose, onSave }: SettingsDial
       const apiKey = keys[0] || ''
       const { data } = await settingsApi.fetchModels(profile.base_url, apiKey)
       if (data.models && data.models.length > 0) {
-        setFetchedModelsMap((prev) => ({ ...prev, [profileId]: data.models }))
-        // 自动把拉到的模型合并进已选（首次拉取直接全选，方便快速启用）
-        updateProfile(profileId, { models: data.models, default_model: data.models[0] })
+        // 能力标记：不具备工具调用（或属于生图/生视频）的模型仅列名、不可勾选
+        const items: ModelOptionItem[] = (data.models as any[]).map((m: any) => {
+          const id = typeof m === 'string' ? m : m.id
+          const image = !!(typeof m === 'object' && m.image)
+          const video = !!(typeof m === 'object' && m.video)
+          const fc = typeof m === 'object' ? !!m.fc : true
+          return {
+            id,
+            disabled: !fc,
+            badge: !fc ? (image ? '生图模型' : video ? '生视频模型' : '不支持工具调用') : undefined,
+          }
+        })
+        setFetchedModelsMap((prev) => ({ ...prev, [profileId]: items }))
+        const capable = items.filter((i) => !i.disabled).map((i) => i.id)
+        if (capable.length > 0) {
+          updateProfile(profileId, { models: capable, default_model: capable[0] })
+        } else {
+          setFetchModelError('该服务没有具备工具调用能力的推理模型')
+        }
       } else {
         setFetchModelError('未拉取到模型，请检查 Base URL 和 API Key')
       }
@@ -275,7 +292,16 @@ export function SettingsDialog({ open, settings, onClose, onSave }: SettingsDial
       const apiKey = keys[0] || ''
       const { data } = await settingsApi.fetchModels(profile.base_url, apiKey)
       if (data.models && data.models.length > 0) {
-        setFetchedMediaModels((prev) => ({ ...prev, [mediaKey]: data.models }))
+        const items: ModelOptionItem[] = (data.models as any[]).map((m: any) => {
+          const id = typeof m === 'string' ? m : m.id
+          const capable = kind === 'image' ? !!(typeof m === 'object' && m.image) : !!(typeof m === 'object' && m.video)
+          return {
+            id,
+            disabled: !capable,
+            badge: capable ? undefined : kind === 'image' ? '非生图模型' : '非生视频模型',
+          }
+        })
+        setFetchedMediaModels((prev) => ({ ...prev, [mediaKey]: items }))
       } else {
         setMediaFetchError('未拉取到模型，请检查 Base URL 和 API Key')
       }
@@ -748,7 +774,7 @@ export function SettingsDialog({ open, settings, onClose, onSave }: SettingsDial
                         className="min-w-0 flex-1 rounded-2xl border border-black/10 bg-white px-3 py-2.5 font-mono text-sm outline-none focus:border-surface-500"
                       >
                         {(fetchedMediaModels['image:' + activeImageId] && fetchedMediaModels['image:' + activeImageId].length > 0
-                          ? fetchedMediaModels['image:' + activeImageId]
+                          ? fetchedMediaModels['image:' + activeImageId].filter((i) => !i.disabled).map((i) => i.id)
                           : (activeImageProfile?.models && activeImageProfile.models.length > 0 ? activeImageProfile.models : [''])
                         ).map((m) => (
                           <option key={m} value={m}>{m}</option>
@@ -919,7 +945,7 @@ export function SettingsDialog({ open, settings, onClose, onSave }: SettingsDial
                         className="min-w-0 flex-1 rounded-2xl border border-black/10 bg-white px-3 py-2.5 font-mono text-sm outline-none focus:border-surface-500"
                       >
                         {(fetchedMediaModels['video:' + activeVideoId] && fetchedMediaModels['video:' + activeVideoId].length > 0
-                          ? fetchedMediaModels['video:' + activeVideoId]
+                          ? fetchedMediaModels['video:' + activeVideoId].filter((i) => !i.disabled).map((i) => i.id)
                           : (activeVideoProfile?.models && activeVideoProfile.models.length > 0 ? activeVideoProfile.models : [''])
                         ).map((m) => (
                           <option key={m} value={m}>{m}</option>

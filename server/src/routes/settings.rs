@@ -815,6 +815,23 @@ fn split_origin_path(base: &str) -> (&str, &str) {
     }
 }
 
+/// 按模型名启发式分类能力（用于列表里标记/灰掉不适用的模型）。
+/// 返回 (function_calling, 生图, 生视频)。
+fn classify_model_capabilities(id: &str) -> (bool, bool, bool) {
+    let lower = id.to_lowercase();
+    let fc_negative = [
+        "embedding", "rerank", "rank", "tts", "asr", "stt", "speech", "voice",
+        "transcribe", "translate", "translation", "ocr", "realtime",
+    ];
+    let image_kw = ["seedream", "sdxl", "flux", "dall", "muse", "image", "draw", "picture", "paint"];
+    let video_kw = ["seedance", "sora", "runway", "veo", "kling", "wan", "video", "animate", "movie", "motion"];
+    let image = image_kw.iter().any(|k| lower.contains(k));
+    let video = video_kw.iter().any(|k| lower.contains(k));
+    // 生图/生视频模型不做工具调用推理
+    let fc = !image && !video && !fc_negative.iter().any(|k| lower.contains(k));
+    (fc, image, video)
+}
+
 /// 拉取 LLM 服务的真实模型列表（OpenAI 兼容 /models 接口）
 async fn fetch_models(
     _user: AuthUser,
@@ -838,7 +855,25 @@ async fn fetch_models(
     let endpoints = model_endpoint_candidates(&base_url);
 
     let mut last_err: Option<String> = None;
-    let mut models: Vec<String> = Vec::new();
+    let mut models: Vec<serde_json::Value> = Vec::new();
+    let mut seen_ids = std::collections::HashSet::new();
+    fn push_model(
+        models: &mut Vec<serde_json::Value>,
+        seen: &mut std::collections::HashSet<String>,
+        id: &str,
+    ) {
+        let id = id.trim().to_string();
+        if id.is_empty() || !seen.insert(id.clone()) {
+            return;
+        }
+        let (fc, image, video) = classify_model_capabilities(&id);
+        models.push(serde_json::json!({
+            "id": id,
+            "fc": fc,
+            "image": image,
+            "video": video,
+        }));
+    }
 
     for endpoint in endpoints {
         let mut builder = client.get(&endpoint);
@@ -861,9 +896,7 @@ async fn fetch_models(
                                 if matches!(status.as_str(), "shutdown" | "offline" | "deprecated" | "disabled" | "inactive") {
                                     continue;
                                 }
-                                if !id.is_empty() && !models.contains(&id.to_string()) {
-                                    models.push(id.to_string());
-                                }
+                                push_model(&mut models, &mut seen_ids, id);
                             }
                         }
                     }
@@ -871,9 +904,7 @@ async fn fetch_models(
                     if let Some(arr) = json.get("models").and_then(|v| v.as_array()) {
                         for item in arr {
                             if let Some(name) = item.get("name").and_then(|v| v.as_str()) {
-                                if !name.is_empty() && !models.contains(&name.to_string()) {
-                                    models.push(name.to_string());
-                                }
+                                push_model(&mut models, &mut seen_ids, name);
                             }
                         }
                     }

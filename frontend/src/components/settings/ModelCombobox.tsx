@@ -1,11 +1,19 @@
 import { useEffect, useRef, useState } from 'react'
 import { ChevronDown, X, Loader2, RefreshCw } from 'lucide-react'
 
+export interface ModelOptionItem {
+  id: string
+  /** 不可勾选（能力不符，仅列出名字） */
+  disabled?: boolean
+  /** 灰掉原因标签（如 不支持工具调用 / 非生图模型） */
+  badge?: string
+}
+
 interface ModelComboboxProps {
   /** 已选中的模型列表 */
   models: string[]
-  /** 可选的完整模型列表（拉取到的真实列表，与已选合并） */
-  options: string[]
+  /** 可选的完整模型列表（拉取到的真实列表，与已选合并；支持 {id,disabled,badge} 结构） */
+  options: (string | ModelOptionItem)[]
   /** 正在拉取中 */
   loading?: boolean
   /** 选择变化回调 */
@@ -14,8 +22,14 @@ interface ModelComboboxProps {
   onFetch?: () => void
 }
 
+/** 统一成条目结构 */
+function toItem(o: string | ModelOptionItem): ModelOptionItem {
+  return typeof o === 'string' ? { id: o } : o
+}
+
 /**
  * 模型选择 combobox：点击展开下拉，可输入过滤，选中后显示为可删除的标签。
+ * 不具备能力的模型仅列出名字（灰色 + 原因标签），不可勾选。
  */
 export function ModelCombobox({ models, options, loading, onChange, onFetch }: ModelComboboxProps) {
   const [open, setOpen] = useState(false)
@@ -36,8 +50,16 @@ export function ModelCombobox({ models, options, loading, onChange, onFetch }: M
   }, [open])
 
   // 可选项 = 已选 + options（去重），并按 query 过滤
-  const allOptions = Array.from(new Set([...models, ...options]))
-  const filtered = allOptions.filter((m) => m.toLowerCase().includes(query.trim().toLowerCase()))
+  const allOptions: ModelOptionItem[] = (() => {
+    const seen = new Map<string, ModelOptionItem>()
+    for (const m of models) seen.set(m, { id: m })
+    for (const o of options) {
+      const item = toItem(o)
+      if (!seen.has(item.id)) seen.set(item.id, item)
+    }
+    return Array.from(seen.values())
+  })()
+  const filtered = allOptions.filter((m) => m.id.toLowerCase().includes(query.trim().toLowerCase()))
 
   const toggleModel = (model: string) => {
     if (models.includes(model)) {
@@ -97,7 +119,7 @@ export function ModelCombobox({ models, options, loading, onChange, onFetch }: M
               placeholder="搜索或输入模型名…"
               className="min-w-0 flex-1 bg-transparent text-sm outline-none placeholder:text-surface-300"
               onKeyDown={(e) => {
-                if (e.key === 'Enter' && query.trim() && !filtered.includes(query.trim())) {
+                if (e.key === 'Enter' && query.trim() && !filtered.some((m) => m.id === query.trim())) {
                   // 允许手动输入新模型名并添加
                   toggleModel(query.trim())
                   setQuery('')
@@ -124,25 +146,37 @@ export function ModelCombobox({ models, options, loading, onChange, onFetch }: M
                 {query.trim() ? `按回车添加「${query.trim()}」` : '暂无模型，点「拉取」获取'}
               </div>
             ) : (
-              filtered.map((m) => {
-                const selected = models.includes(m)
+              filtered.map((item) => {
+                const selected = models.includes(item.id)
+                const locked = !!item.disabled
                 return (
                   <button
-                    key={m}
+                    key={item.id}
                     type="button"
-                    onClick={() => toggleModel(m)}
+                    onClick={() => { if (!locked) toggleModel(item.id) }}
+                    disabled={locked}
                     className={`flex w-full items-center gap-2 rounded-lg px-3 py-2 text-left text-sm transition ${
-                      selected ? 'bg-primary-50 text-primary-700' : 'text-surface-700 hover:bg-surface-50'
+                      locked
+                        ? 'cursor-not-allowed opacity-55'
+                        : selected
+                          ? 'bg-primary-50 text-primary-700'
+                          : 'text-surface-700 hover:bg-surface-50'
                     }`}
+                    title={locked ? (item.badge || '不可选') : item.id}
                   >
-                    <span className={`flex h-4 w-4 shrink-0 items-center justify-center rounded border ${selected ? 'border-primary-500 bg-primary-500' : 'border-surface-300'}`}>
+                    <span className={`flex h-4 w-4 shrink-0 items-center justify-center rounded border ${locked ? 'border-surface-200 bg-surface-100' : selected ? 'border-primary-500 bg-primary-500' : 'border-surface-300'}`}>
                       {selected && (
                         <svg className="h-3 w-3 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth={3}>
                           <path strokeLinecap="round" strokeLinejoin="round" d="M5 13l4 4L19 7" />
                         </svg>
                       )}
                     </span>
-                    <span className="truncate">{m}</span>
+                    <span className="min-w-0 flex-1 truncate">{item.id}</span>
+                    {item.badge && (
+                      <span className="shrink-0 rounded-full bg-surface-100 px-1.5 py-0.5 text-[9px] font-medium text-surface-400">
+                        {item.badge}
+                      </span>
+                    )}
                   </button>
                 )
               })
