@@ -75,6 +75,9 @@ export interface NasConfig {
   username: string;
   password: string;
   enabled: boolean;
+  mode?: string;
+  worker_url?: string;
+  worker_key?: string;
 }
 
 export interface AppSettings {

@@ -553,6 +553,11 @@ impl OfficeTool for VideoGenerateTool {
                     "items": { "type": "string" },
                     "description": "音频参考 URL 列表。在 prompt 中用 <Audio N> 引用，用于根据音乐节奏设计动作和镜头切换"
                 },
+                "nas_refs": {
+                    "type": "array",
+                    "items": { "type": "string" },
+                    "description": "NAS（懒猫网盘）中的参考图相对路径列表（1-2 张，用于图生视频首尾帧），本地算力模式下直接在局域网读取；可先用 nas_list 工具浏览"
+                },
                 "video_urls": {
                     "type": "array",
                     "description": "视频参考素材列表。可为字符串 URL 或对象 {url, start_seconds, require_audio}。在 prompt 中用 <Video N> 引用，用于视频续写、风格迁移",
@@ -794,6 +799,11 @@ impl OfficeTool for VideoGenerateTool {
 
         let is_volc = credentials.video_vendor() == crate::agent::tools::agnes_media::VideoVendor::Volcengine;
 
+        let nas_refs: Vec<String> = input
+            .get("nas_refs")
+            .and_then(|v| v.as_array())
+            .map(|arr| arr.iter().filter_map(|x| x.as_str()).map(|x| x.trim().to_string()).filter(|x| !x.is_empty()).collect())
+            .unwrap_or_default();
         // 请求体：按厂商分派（Agnes 用 prompt/seconds/aspect_ratio；火山方舟用 content 数组）
         let mut request_body = if is_volc {
             // 火山方舟 Seedance：content 数组（text + 图片参考）+ resolution + duration + ratio
@@ -801,13 +811,18 @@ impl OfficeTool for VideoGenerateTool {
             for img in &image_inputs {
                 content_arr.push(json!({ "type": "image_url", "image_url": { "url": img }, "role": "reference_image" }));
             }
-            json!({
+            let mut vb = json!({
                 "model": video_model.as_str(),
                 "content": content_arr,
                 "resolution": size_label.to_lowercase(),
                 "duration": plan.seconds,
                 "ratio": plan.aspect_ratio.clone(),
-            })
+            });
+            // 本地 NAS 模式：参考图路径直接交给局域网 worker（数据面不出局域网）
+            if !nas_refs.is_empty() && credentials.base_url.contains("/api/v3/nas") {
+                vb["nas_inputs"] = json!(nas_refs);
+            }
+            vb
         } else {
             // Agnes V2.5：prompt + seconds + size + aspect_ratio
             json!({

@@ -271,6 +271,11 @@ impl OfficeTool for ImagePromptTool {
                     "type": "array",
                     "items": { "type": "string" },
                     "description": "多张图生图参考图片 URL 或 data URL，可选"
+                },
+                "nas_refs": {
+                    "type": "array",
+                    "items": { "type": "string" },
+                    "description": "NAS（懒猫网盘）中的参考图相对路径列表，本地算力模式下直接在局域网读取，不经过公网；可先用 nas_list 工具浏览"
                 }
             },
             "required": ["topic"]
@@ -319,6 +324,11 @@ impl OfficeTool for ImagePromptTool {
         } else {
             styles
         };
+        let nas_refs: Vec<String> = input
+            .get("nas_refs")
+            .and_then(|v| v.as_array())
+            .map(|arr| arr.iter().filter_map(|x| x.as_str()).map(|x| x.trim().to_string()).filter(|x| !x.is_empty()).collect())
+            .unwrap_or_default();
         let image_inputs_raw = collect_image_inputs(ctx, &input);
         // 内部文件地址归一化为 base64，图生图引用不受外部签名过期影响
         let image_inputs = {
@@ -470,6 +480,10 @@ impl OfficeTool for ImagePromptTool {
                         json!(image_inputs.clone())
                     };
                     body["image"] = image_val;
+                }
+                // 本地 NAS 模式：参考图路径直接交给局域网 worker（数据面不出局域网）
+                if !nas_refs.is_empty() && credentials.base_url.contains("/api/v3/nas") {
+                    body["nas_inputs"] = json!(nas_refs);
                 }
                 body
             } else if img2img {

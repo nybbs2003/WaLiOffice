@@ -8,6 +8,35 @@ use crate::models::NasConfig;
 /// macOS 系统 CA bundle 尚未收录，懒猫微服 *.heiyu.space 证书链需要它。
 const LE_NEW_ROOTS_PEM: &str = include_str!("../../../assets/le-new-roots.pem");
 
+/// worker 中继模式判定：office 部署在公网（如阿里云）时，NAS 读写经局域网媒体 worker 中继，
+/// 数据面在 NAS↔spark 局域网内完成，不经过公网服务器。
+pub fn is_worker_relay(cfg: &NasConfig) -> bool {
+    cfg.mode == "worker" && !cfg.worker_url.is_empty()
+}
+
+/// 经 worker 控制面发 HTTP 请求（只传小 JSON / 文件字节按需）
+async fn worker_request(
+    cfg: &NasConfig,
+    method: &str,
+    url: &str,
+    body: Option<Vec<u8>>,
+) -> anyhow::Result<(u16, String)> {
+    let client = reqwest::Client::builder()
+        .timeout(std::time::Duration::from_secs(900))
+        .build()?;
+    let mut req = client
+        .request(reqwest::Method::from_bytes(method.as_bytes())?, url)
+        .header("Authorization", format!("Bearer {}", cfg.worker_key));
+    if let Some(b) = body {
+        req = req.body(b);
+    }
+    let resp = req.send().await?;
+    let status = resp.status().as_u16();
+    let bytes = resp.bytes().await?;
+    let text = String::from_utf8_lossy(&bytes).to_string();
+    Ok((status, text))
+}
+
 /// 读取当前用户的 NAS 访问凭据（按 user_id 隔离，多租户互不冲突；纯 HTTP(S) 请求，不挂载文件系统）
 async fn get_nas_config(ctx: &ToolContext) -> anyhow::Result<NasConfig> {
     let pool = crate::state::db_pool();
@@ -15,10 +44,19 @@ async fn get_nas_config(ctx: &ToolContext) -> anyhow::Result<NasConfig> {
         .await?
         .unwrap_or_else(crate::routes::settings::default_settings);
     let cfg = settings.nas_config;
-    if !cfg.enabled || cfg.base_url.is_empty() {
+    if !cfg.enabled {
         return Err(anyhow::anyhow!(
             "尚未配置 WebDAV 数据源，请先在「设置 → 数据源」中填写懒猫微服 WebDAV 地址与凭据"
         ));
+    }
+    if is_worker_relay(&cfg) {
+        if cfg.worker_url.is_empty() {
+            return Err(anyhow::anyhow!("worker 中继模式缺少 worker 地址"));
+        }
+        return Ok(cfg);
+    }
+    if cfg.base_url.is_empty() {
+        return Err(anyhow::anyhow!("WebDAV 数据源缺少地址"));
     }
     if cfg.username.is_empty() {
         return Err(anyhow::anyhow!("WebDAV 数据源缺少用户名"));
@@ -228,6 +266,30 @@ async fn dav_list(
     cfg: &NasConfig,
     rel_path: &str,
 ) -> anyhow::Result<Vec<serde_json::Value>> {
+    if is_worker_relay(cfg) {
+        let path = sanitize_path(rel_path)?;
+        let url = format!("{}/nas/list?path={}", cfg.worker_url.trim_end_matches('/'), path);
+        let (status, body) = worker_request(cfg, "GET", &url, None).await?;
+        if status != 200 {
+            return Err(anyhow::anyhow!("worker 列目录失败（HTTP {status}）: {}", body.chars().take(300).collect::<String>()));
+        }
+        let j: serde_json::Value = serde_json::from_str(&body).map_err(|e| anyhow::anyhow!("worker 响应解析失败: {e}"))?;
+        let items = j
+            .get("items")
+            .and_then(|v| v.as_array())
+            .cloned()
+            .unwrap_or_default()
+            .into_iter()
+            .map(|it| json!({
+                "name": it.get("name").and_then(|v| v.as_str()).unwrap_or(""),
+                "href": it.get("name").and_then(|v| v.as_str()).unwrap_or(""),
+                "is_dir": it.get("is_dir").and_then(|v| v.as_bool()).unwrap_or(false),
+                "size": it.get("size").and_then(|v| v.as_i64()).unwrap_or(0),
+                "modified": it.get("mtime").and_then(|v| v.as_str()).unwrap_or(""),
+            }))
+            .collect::<Vec<_>>();
+        return Ok(items);
+    }
     let full_path = match sanitize_path(rel_path) { Ok(p) => p, Err(e) => return Err(e) };
     let url = join_url(&cfg.base_url, &full_path);
     let body = r#"<?xml version="1.0" encoding="utf-8"?>
@@ -332,6 +394,15 @@ fn parse_propfind_response(body: &str) -> anyhow::Result<Vec<serde_json::Value>>
 
 /// GET 读取文件内容
 async fn dav_read(cfg: &NasConfig, rel_path: &str) -> anyhow::Result<(String, String)> {
+    if is_worker_relay(cfg) {
+        let path = sanitize_path(rel_path)?;
+        let url = format!("{}/nas/get?path={}", cfg.worker_url.trim_end_matches('/'), path);
+        let (status, body) = worker_request(cfg, "GET", &url, None).await?;
+        if status != 200 {
+            return Err(anyhow::anyhow!("worker 读取失败（HTTP {status}）: {}", body.chars().take(300).collect::<String>()));
+        }
+        return Ok((body, "text/plain".to_string()));
+    }
     let full_path = match sanitize_path(rel_path) { Ok(p) => p, Err(e) => return Err(e) };
     let url = join_url(&cfg.base_url, &full_path);
     let (status, body) = dav_request(
@@ -350,6 +421,15 @@ async fn dav_read(cfg: &NasConfig, rel_path: &str) -> anyhow::Result<(String, St
 
 /// PUT 写入文件
 async fn dav_write(cfg: &NasConfig, rel_path: &str, content: &str) -> anyhow::Result<()> {
+    if is_worker_relay(cfg) {
+        let path = sanitize_path(rel_path)?;
+        let url = format!("{}/nas/put?path={}", cfg.worker_url.trim_end_matches('/'), path);
+        let (status, body) = worker_request(cfg, "PUT", &url, Some(content.as_bytes().to_vec())).await?;
+        if status != 200 {
+            return Err(anyhow::anyhow!("worker 写入失败（HTTP {status}）: {}", body.chars().take(300).collect::<String>()));
+        }
+        return Ok(());
+    }
     let full_path = match sanitize_path(rel_path) { Ok(p) => p, Err(e) => return Err(e) };
     let url = join_url(&cfg.base_url, &full_path);
     let (status, body) = dav_request(
@@ -368,6 +448,16 @@ async fn dav_write(cfg: &NasConfig, rel_path: &str, content: &str) -> anyhow::Re
 
 /// MKCOL 建目录
 async fn dav_mkdir(cfg: &NasConfig, rel_path: &str) -> anyhow::Result<()> {
+    if is_worker_relay(cfg) {
+        let path = sanitize_path(rel_path)?;
+        let url = format!("{}/nas/mkdir", cfg.worker_url.trim_end_matches('/'));
+        let body = serde_json::json!({ "path": path }).to_string();
+        let (status, resp_body) = worker_request(cfg, "POST", &url, Some(body.as_bytes().to_vec())).await?;
+        if status != 200 {
+            return Err(anyhow::anyhow!("worker 建目录失败（HTTP {status}）: {}", resp_body.chars().take(300).collect::<String>()));
+        }
+        return Ok(());
+    }
     let full_path = match sanitize_path(rel_path) { Ok(p) => p, Err(e) => return Err(e) };
     let url = join_url(&cfg.base_url, &full_path);
     let (status, body) = dav_request(

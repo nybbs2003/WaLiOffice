@@ -663,13 +663,32 @@ export function SettingsDialog({ open, settings, onClose, onSave }: SettingsDial
           {section === 'nas' && (
             <div>
               <h2 className="text-xl font-bold tracking-tight text-surface-950">WebDAV 数据源</h2>
-              <p className="mt-1 text-sm text-surface-500">通过 HTTP(S) WebDAV 协议直接访问懒猫微服 NAS 文件，不在文件系统上挂载。每个用户填各自的懒猫账号 WebDAV 凭据，懒猫微服按账号隔离文件空间。</p>
+              <p className="mt-1 text-sm text-surface-500">通过 HTTP(S) WebDAV 协议访问懒猫微服 NAS 文件。办公室部署在公网（阿里云）时推荐「局域网 worker 中继」模式：NAS 读写全部在本地算力机（spark）与 NAS 之间的局域网内完成，大数据不经过公网服务器。</p>
               <div className="mt-5 space-y-4">
+                <div className="rounded-2xl border border-surface-200 bg-surface-50 p-3">
+                  <label className="block text-sm font-semibold text-surface-700">访问模式</label>
+                  <div className="mt-2 flex gap-2">
+                    <button
+                      type="button"
+                      onClick={() => updateDraft({ nas_config: { ...(draft.nas_config || { name: '', base_url: '', username: '', password: '', worker_url: '', worker_key: '', enabled: true }), mode: 'worker' } })}
+                      className={`rounded-xl px-3 py-2 text-sm font-semibold transition ${(draft.nas_config?.mode || 'direct') === 'worker' ? 'bg-surface-950 text-white' : 'bg-white text-surface-600 border border-surface-300 hover:bg-surface-100'}`}
+                    >
+                      局域网 worker 中继（推荐·公网部署）
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => updateDraft({ nas_config: { ...(draft.nas_config || { name: '', base_url: '', username: '', password: '', worker_url: '', worker_key: '', enabled: true }), mode: 'direct' } })}
+                      className={`rounded-xl px-3 py-2 text-sm font-semibold transition ${(draft.nas_config?.mode || 'direct') === 'direct' ? 'bg-surface-950 text-white' : 'bg-white text-surface-600 border border-surface-300 hover:bg-surface-100'}`}
+                    >
+                      直接 WebDAV（office 与 NAS 同局域网）
+                    </button>
+                  </div>
+                </div>
                 <label className="flex items-center gap-2 text-sm font-semibold text-surface-600">
                   <input
                     type="checkbox"
                     checked={draft.nas_config?.enabled || false}
-                    onChange={(event) => updateDraft({ nas_config: { ...(draft.nas_config || { name: '', base_url: '', username: '', password: '', enabled: false }), enabled: event.target.checked } })}
+                    onChange={(event) => updateDraft({ nas_config: { ...(draft.nas_config || { name: '', base_url: '', username: '', password: '', worker_url: '', worker_key: '', enabled: false }), enabled: event.target.checked } })}
                     className="h-4 w-4 rounded border-surface-300 text-surface-950"
                   />
                   启用 WebDAV 数据源
@@ -684,6 +703,31 @@ export function SettingsDialog({ open, settings, onClose, onSave }: SettingsDial
                     className="mt-2 w-full rounded-2xl border border-black/10 bg-white px-3 py-2.5 text-sm outline-none focus:border-surface-500"
                   />
                 </label>
+
+                {(draft.nas_config?.mode || 'direct') === 'worker' && (
+                  <>
+                    <label className="block text-sm font-semibold text-surface-600">
+                      Worker 控制面地址（spark 局域网 worker 经 frp 的回环地址）
+                      <input
+                        value={draft.nas_config?.worker_url || ''}
+                        onChange={(event) => updateDraft({ nas_config: { ...(draft.nas_config || { name: '', base_url: '', username: '', password: '', enabled: true }), worker_url: event.target.value } })}
+                        placeholder="http://127.0.0.1:19095"
+                        className="mt-2 w-full rounded-2xl border border-black/10 bg-white px-3 py-2.5 font-mono text-sm outline-none focus:border-surface-500"
+                      />
+                    </label>
+                    <label className="block text-sm font-semibold text-surface-600">
+                      Worker 密钥
+                      <input
+                        type="password"
+                        value={draft.nas_config?.worker_key || ''}
+                        onChange={(event) => updateDraft({ nas_config: { ...(draft.nas_config || { name: '', base_url: '', username: '', password: '', enabled: true }), worker_key: event.target.value } })}
+                        placeholder="media-worker-2026"
+                        className="mt-2 w-full rounded-2xl border border-black/10 bg-white px-3 py-2.5 font-mono text-sm outline-none focus:border-surface-500"
+                      />
+                    </label>
+                    <p className="text-xs text-surface-400">NAS 的 WebDAV 账号密码由局域网 worker 持有（不经过本服务器），下方凭据留空即可。</p>
+                  </>
+                )}
 
                 <label className="block text-sm font-semibold text-surface-600">
                   WebDAV 地址
