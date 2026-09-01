@@ -23,6 +23,7 @@ function RedirectHome() {
 function App() {
   const isAuthenticated = useAuthStore((s) => s.isAuthenticated)
   const logout = useAuthStore((s) => s.logout)
+  const updateUser = useAuthStore((s) => s.updateUser)
   const [checking, setChecking] = useState(true)
 
   // 以服务器 Cookie 会话为准：localStorage 里可能残留旧 token（签名仍有效但无 Cookie），
@@ -35,7 +36,17 @@ function App() {
     // 不带 Authorization 头 → 服务端只校验 wa_session Cookie
     fetch('/api/auth/session-check')
       .then((resp) => {
-        if (!resp.ok) logout()
+        if (!resp.ok) {
+          logout()
+          return
+        }
+        // 会话有效：拉最新 user（昵称/头像登录后可能已更新，自愈旧缓存）
+        fetch('/api/auth/session-token')
+          .then((r2) => (r2.ok ? r2.json() : null))
+          .then((data) => {
+            if (data?.user) updateUser(data.user)
+          })
+          .catch(() => {})
       })
       .catch(() => logout())
       .finally(() => setChecking(false))

@@ -378,10 +378,14 @@ async fn feishu_login(
     let user = match user_repo::find_by_username(&pool, &username).await {
         Ok(Some((user, _))) => {
             // 已存在：登录时刷新飞书昵称 + 头像（失败不阻断登录，仅记日志）
-            if let Err(e) = user_repo::update_profile(&pool, &user.id, Some(&name), avatar.as_deref()).await {
-                tracing::error!("[Feishu] update_profile 失败: {e:#}");
+            match user_repo::update_profile(&pool, &user.id, Some(&name), avatar.as_deref()).await {
+                Ok(Some(updated)) => updated,
+                Ok(None) => user,
+                Err(e) => {
+                    tracing::error!("[Feishu] update_profile 失败: {e:#}");
+                    user
+                }
             }
-            user
         }
         Ok(None) => {
             // 新建：若带 tenant_id 则归属该租户；否则自动建个人租户
