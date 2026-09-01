@@ -498,7 +498,7 @@ export function SettingsDialog({ open, settings, onClose, onSave }: SettingsDial
                     onChange={(event) => updateDraft({ active_model: event.target.value, default_model: event.target.value })}
                     className="rounded-2xl border border-black/10 bg-white px-3 py-2.5 text-sm outline-none focus:border-surface-500"
                   >
-                    {(activeProfile?.models || []).map((model) => (
+                    {[...(activeProfile?.models || [])].sort((a, b) => a.localeCompare(b, 'en')).map((model) => (
                       <option key={model} value={model}>{model}</option>
                     ))}
                   </select>
@@ -776,7 +776,7 @@ export function SettingsDialog({ open, settings, onClose, onSave }: SettingsDial
                         {(fetchedMediaModels['image:' + activeImageId] && fetchedMediaModels['image:' + activeImageId].length > 0
                           ? fetchedMediaModels['image:' + activeImageId].filter((i) => !i.disabled).map((i) => i.id)
                           : (activeImageProfile?.models && activeImageProfile.models.length > 0 ? activeImageProfile.models : [''])
-                        ).map((m) => (
+                        ).slice().sort((a, b) => a.localeCompare(b, 'en')).map((m) => (
                           <option key={m} value={m}>{m}</option>
                         ))}
                       </select>
@@ -947,7 +947,7 @@ export function SettingsDialog({ open, settings, onClose, onSave }: SettingsDial
                         {(fetchedMediaModels['video:' + activeVideoId] && fetchedMediaModels['video:' + activeVideoId].length > 0
                           ? fetchedMediaModels['video:' + activeVideoId].filter((i) => !i.disabled).map((i) => i.id)
                           : (activeVideoProfile?.models && activeVideoProfile.models.length > 0 ? activeVideoProfile.models : [''])
-                        ).map((m) => (
+                        ).slice().sort((a, b) => a.localeCompare(b, 'en')).map((m) => (
                           <option key={m} value={m}>{m}</option>
                         ))}
                       </select>

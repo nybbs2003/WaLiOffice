@@ -82,7 +82,7 @@ export function ToolConfigDropdown({
   // 模型选项：优先动态（用户多媒体配置的启用配置），否则用工具内置预设
   const resolveOptions = (opt: ToolConfigOption): ToolConfigOption['options'] | undefined => {
     if (opt.key === 'model' && modelOptions && modelOptions.options.length > 0) {
-      return modelOptions.options
+      return [...modelOptions.options].sort((a, b) => a.value.localeCompare(b.value, 'en'))
     }
     return opt.options
   }

@@ -59,7 +59,9 @@ export function ModelCombobox({ models, options, loading, onChange, onFetch }: M
     }
     return Array.from(seen.values())
   })()
-  const filtered = allOptions.filter((m) => m.id.toLowerCase().includes(query.trim().toLowerCase()))
+  const filtered = allOptions
+    .filter((m) => m.id.toLowerCase().includes(query.trim().toLowerCase()))
+    .sort((a, b) => a.id.localeCompare(b.id, 'en'))
 
   const toggleModel = (model: string) => {
     if (models.includes(model)) {

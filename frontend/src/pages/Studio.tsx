@@ -215,6 +215,7 @@ export default function Studio() {
         seen.add(m)
         options.push({ value: m, label: m, description: `${profile.name || (kind === 'image' ? '图片模型服务' : '视频模型服务')}` })
       }
+      options.sort((a, b) => a.value.localeCompare(b.value, 'en'))
       const defaultModel = profile.model || profile.default_model || options[0]?.value || ''
       return { options, defaultModel }
     }
