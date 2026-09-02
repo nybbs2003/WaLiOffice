@@ -1,6 +1,6 @@
-# WaLiOffice 多租户改造说明
+# Moe Office 多租户改造说明
 
-本文档说明对 WaLiOffice 进行的多租户隔离与权限体系升级。
+本文档说明对 Moe Office（基于 fuzhengwei/WaLiOffice 二次开发）进行的多租户隔离与权限体系升级。
 
 ## 一、改造背景
 

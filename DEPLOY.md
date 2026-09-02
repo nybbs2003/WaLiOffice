@@ -1,4 +1,8 @@
-# WaLiOffice 云服务器部署说明
+# Moe Office 云服务器部署说明
+
+> 当前生产部署（spark1.lab207.cn，阿里云 47.106.98.132）采用**单一 Rust 二进制**部署：
+> 本地/CI 构建后 scp 二进制 + `.env` 到 `/opt/walioffice`，以 systemd 常驻。
+> 下方 Docker 流程为可选的容器化部署路径（上游原流程，镜像仓库已换成本 fork 自持）。
 
 ## 完整流程
 
@@ -7,21 +11,15 @@
 ```bash
 # 1. 启动 Docker Desktop
 # 2. 进入项目目录
-cd /Users/fuzhengwei/coding/gitcode/KnowledgePlanet/WaLiOffice/WaLiOffice
+cd ~/git/WaLiOffice-fork
 
-# 3. 确认 .local-config 已配置阿里云账号
-cat .local-config
-# 应包含:
-# ALIYUN_USERNAME="小傅哥"
-# ALIYUN_PASSWORD="你的密码"
-
-# 4. 构建并推送
+# 3. 构建并推送（build.sh 需自持镜像仓库凭据）
 ./build.sh
 ```
 
-构建完成后镜像地址：
+构建完成后镜像地址（以实际自持仓库为准）：
 ```
-registry.cn-hangzhou.aliyuncs.com/fuzhengwei/walioffice:1.0
+registry.cn-hangzhou.aliyuncs.com/<your-namespace>/walioffice:1.0
 ```
 
 ### 第二步：云服务器部署
