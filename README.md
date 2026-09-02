@@ -1,8 +1,8 @@
-# WaLiOffice
+# Moe Office
 
-> Web 端 AI Agent 智能办公平台 — 通过自然语言对话，一键生成 PPT、文档、表格、流程图、图表、图片和视频。
+> 基于 [WaLiOffice](https://github.com/fuzhengwei/WaLiOffice)（fuzhengwei 开源）二次开发的 Web 端 AI Agent 智能办公平台 — 品牌更名「Moe Office」，通过自然语言对话一键生成 PPT、文档、表格、流程图、图表、图片和视频，并深度集成飞书协作、会议纪要、语音播报与本地算力（NAS 直连 AIGC）。
 
-WaLiOffice 将 AI Agent 能力与办公文档生成深度结合：用户在对话中描述需求，Agent 自动拆解任务、调用工具、生成产物，全程 SSE 流式响应，实时展示思考和生成过程。生产部署只需一个 Rust 二进制（前端静态资源内嵌），开箱即用。
+Moe Office 将 AI Agent 能力与办公文档生成深度结合：用户在对话中描述需求，Agent 自动拆解任务、调用工具、生成产物，全程 SSE 流式响应，实时展示思考和生成过程。生产部署只需一个 Rust 二进制（前端静态资源内嵌），开箱即用。
 
 你也可以选择安装 Deepseek Harness Plugin [https://github.com/fuzhengwei/walioffice-dsh-plugin](https://github.com/fuzhengwei/walioffice-dsh-plugin)
 
@@ -19,7 +19,12 @@ WaLiOffice 将 AI Agent 能力与办公文档生成深度结合：用户在对�
 - **联网搜索**：支持 SearXNG / DuckDuckGo 多搜索源，Agent 可主动检索实时信息
 - **文件解析**：支持上传文件内容提取与 OCR 识别，作为对话上下文
 - **多模型切换**：文本 / 图片 / 视频各自独立配置模型列表，前端设置页可实时切换
-- **用户认证**：JWT 认证 + 公众号验证码登录，支持注册和登录验证码
+- **用户认证**：JWT 认证 + 飞书 OAuth 登录（头像昵称刷新）+ 账号密码注册/登录
+- **飞书协作**：飞书文档 / 多维表格 / 日历 / 云盘 / 知识库工具集，权限不足交互式要权
+- **会议录音与纪要**：流式录音 → 转写 → 实时增量纪要（对标豆包/元宝）
+- **语音播报**：微软 Edge TTS 免费音色（晓伊），消息气泡播报 + 新消息自动播报
+- **多租户**：租户隔离 + RBAC 角色体系（super_admin / tenant_admin / member）
+- **NAS 直连 AIGC**：懒猫微服 WebDAV 多数据源、worker 中继、内网自动识别，生图/生视频数据面局域网内完成
 - **单一二进制部署**：Rust + rust-embed，前端嵌入后端，一个二进制即可启动全部服务
 - **Docker 一键部署**：多阶段构建，内置国内镜像加速
 
@@ -81,7 +86,7 @@ WaLiOffice/
 │       ├── image_ocr.rs      # OCR 图片识别
 │       ├── agent/            # Agent 引擎
 │       │   ├── mod.rs        # ReAct 循环 + 上下文管理
-│       │   └── tools/        # 内置工具（13 个）
+│       │   └── tools/        # 内置工具（17 个）
 │       │       ├── ppt_plan.rs        # PPT 大纲规划
 │       │       ├── ppt_generate.rs    # PPT 生成
 │       │       ├── doc_generate.rs    # 文档生成
@@ -91,18 +96,23 @@ WaLiOffice/
 │       │       ├── md_generate.rs     # Markdown 生成
 │       │       ├── image_prompt.rs    # 图片提示词 + 生成
 │       │       ├── video_generate.rs  # 视频生成（远程）
+│       │       ├── video_batch_generate.rs # 批量生成视频
+│       │       ├── video_storyboard.rs # 视频分镜脚本
 │       │       ├── local_video.rs     # 视频本地兜底
 │       │       ├── agnes_media.rs     # Agnes 图像/视频服务
-│       │       ├── web_search.rs      # 联网搜索
+│       │       ├── feishu_tools.rs    # 飞书文档/多维表格/日历/云盘/知识库
+│       │       ├── nas_tools.rs       # NAS（WebDAV）文件读写
+│       │       ├── meeting_minutes.rs # 会议录音转写纪要
+│       │       ├── web_search_generic.rs # 联网搜索
 │       │       └── mod.rs             # 工具注册表
 │       ├── llm/              # OpenAI 兼容 LLM Client（流式 + 非流式）
 │       ├── auth/             # JWT 认证中间件
 │       ├── db/               # SQLite 连接池 + migration + repository
 │       ├── models/           # 数据模型
 │       ├── render/           # DOCX / XLSX 纯 Rust 渲染
-│       └── routes/           # API 路由（12 个模块）
+│       └── routes/           # API 路由（14 个模块）
 │           ├── chat.rs       # SSE 流式 Agent 对话
-│           ├── auth.rs       # 登录 / 注册 / 验证码
+│           ├── auth.rs       # 登录 / 注册 / 验证码 / 飞书 OAuth
 │           ├── session.rs    # 会话管理
 │           ├── project.rs    # 项目管理
 │           ├── file.rs       # 文件上传 / 下载
@@ -110,6 +120,8 @@ WaLiOffice/
 │           ├── dashboard.rs  # 统计面板
 │           ├── doc_export.rs # 文档导出
 │           ├── notification.rs # 通知
+│           ├── audio.rs      # 会议录音 / 转写 / TTS
+│           ├── tenant.rs     # 多租户与成员管理
 │           ├── embed.rs      # 嵌入式静态资源
 │           └── health.rs     # 健康检查
 ├── frontend/                 # React 前端（~9000 行）
@@ -220,6 +232,11 @@ Agent 通过 ReAct 循环自动编排以下工具，用户无需手动选择：
 | `drawio_generate` | 生成流程图 / 架构图 | draw.io XML |
 | `image_prompt` | 生成图片提示词并调用文生图 | 图片 |
 | `video_generate` | 调用文生视频模型生成视频 | MP4 |
+| `video_batch_generate` | 批量生成视频 | MP4 |
+| `video_storyboard` | 视频分镜脚本生成 | 分镜 |
+| `meeting_minutes` | 会议录音转写与实时纪要 | 纪要 |
+| `feishu_*` | 飞书文档/多维表格/日历/云盘/知识库读写 | 结构化数据 |
+| `nas_*` | NAS（WebDAV）文件列表/读写/建目录 | 文件 |
 | `web_search` | 联网搜索实时信息 | 搜索结果摘要 |
 
 ## 📡 API 接口
@@ -228,6 +245,7 @@ Agent 通过 ReAct 循环自动编排以下工具，用户无需手动选择：
 |------|------|------|
 | `/api/auth/login` | POST | 登录（账号密码 / 验证码） |
 | `/api/auth/register` | POST | 注册 |
+| `/api/auth/feishu/login` | POST | 飞书 OAuth 登录 |
 | `/api/auth/me` | GET | 获取当前用户信息 |
 | `/api/chat/stream` | POST | SSE 流式 Agent 对话 |
 | `/api/chat/sessions` | GET | 会话列表 |
@@ -243,6 +261,10 @@ Agent 通过 ReAct 循环自动编排以下工具，用户无需手动选择：
 | `/api/settings/model` | PUT | 切换当前模型 |
 | `/api/dashboard/stats` | GET | 统计数据 |
 | `/api/notification/list` | GET | 通知列表 |
+| `/api/audio/recordings` | POST | 会议录音（上传/列表） |
+| `/api/audio/stream/:sid/*` | POST/GET | 流式录音分块 / 转写 / 纪要 |
+| `/api/tts/synthesize` | POST | TTS 语音合成 |
+| `/api/tenants` | GET/POST | 租户列表 / 创建 |
 | `/api/health` | GET | 健康检查 |
 
 ## 🐳 Docker 构建说明
@@ -279,14 +301,15 @@ Dockerfile 采用三阶段构建：
 
 ## 📌 登录说明
 
-- 支持**账号密码注册 / 登录**和**公众号验证码登录**两种方式
-- 验证码登录需配置 `WALIOFFICE_X_API_AUTH_LOGIN_URL` 指向验证服务
-- 管理后台已暂时移除，启动时不再创建默认管理员账号
+- 支持**账号密码注册 / 登录**、**飞书 OAuth 登录**（头像昵称展示）和**邀请码注册**三种方式
+- 多租户：支持租户隔离 + RBAC 角色体系（super_admin / tenant_admin / member），详见 [MULTITENANCY.md](MULTITENANCY.md)
 
 ## 📄 相关文档
 
 - [架构设计](ARCHITECTURE.md) — 技术分层、模块职责、数据流
 - [部署指南](DEPLOY.md) — 云服务器完整部署流程（Docker + Nginx + HTTPS）
+- [多租户改造说明](MULTITENANCY.md) — 租户隔离与 RBAC 权限体系
+- [NAS WebDAV 集成](docs/nas-webdav-integration.md) — 懒猫微服 NAS 数据源集成
 
 ## 📜 License
 
