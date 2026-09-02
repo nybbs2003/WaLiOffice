@@ -841,6 +841,60 @@ fn classify_model_capabilities(id: &str) -> (bool, bool, bool) {
     (fc, image, video)
 }
 
+/// LiteLLM 网关提供 /model/info：litellm_params.model_info.supports_function_calling
+/// 是工具调用能力的权威来源（名字启发式无法识别 qwen2.5vl 这类无工具能力的模型）。
+/// 仅在接口成功且返回数据时使用；失败/无数据则回退到名字启发式。best-effort，不阻塞主流程。
+async fn fetch_tool_capability_overrides(
+    client: &reqwest::Client,
+    base_url: &str,
+    api_key: &str,
+) -> std::collections::HashMap<String, bool> {
+    let mut overrides = std::collections::HashMap::new();
+    let mut candidates = vec![format!("{base_url}/model/info"), format!("{base_url}/v1/model/info")];
+    // base 若带 API 前缀（如 https://host/v1），前缀本身往往就是 LiteLLM 根，也试一下
+    if let Some((origin, path)) = base_url.split_once("://").and_then(|(s, rest)| {
+        rest.find('/').map(|i| (&base_url[..s.len() + 3 + i], &rest[i..]))
+    }) {
+        if !path.is_empty() && path != "/" {
+            candidates.push(format!("{origin}/model/info"));
+        }
+    }
+    for endpoint in candidates {
+        let mut builder = client.get(&endpoint);
+        if !api_key.trim().is_empty() {
+            builder = builder.header("Authorization", format!("Bearer {}", api_key.trim()));
+        }
+        let resp = match builder.send().await {
+            Ok(r) => r,
+            Err(_) => continue,
+        };
+        if !resp.status().is_success() {
+            continue;
+        }
+        let json: serde_json::Value = match resp.json().await {
+            Ok(v) => v,
+            Err(_) => continue,
+        };
+        if let Some(arr) = json.get("data").and_then(|v| v.as_array()) {
+            for item in arr {
+                let name = item.get("model_name").and_then(|v| v.as_str());
+                let sfc = item
+                    .get("litellm_params")
+                    .and_then(|v| v.get("model_info"))
+                    .and_then(|v| v.get("supports_function_calling"))
+                    .and_then(|v| v.as_bool());
+                if let (Some(name), Some(sfc)) = (name, sfc) {
+                    overrides.insert(name.trim().to_string(), sfc);
+                }
+            }
+            if !overrides.is_empty() {
+                return overrides;
+            }
+        }
+    }
+    overrides
+}
+
 /// 拉取 LLM 服务的真实模型列表（OpenAI 兼容 /models 接口）
 async fn fetch_models(
     _user: AuthUser,
@@ -918,6 +972,16 @@ async fn fetch_models(
                         }
                     }
                     if !models.is_empty() {
+                        // LiteLLM 网关权威能力信息：/model/info 的 supports_function_calling
+                        // 覆盖名字启发式（无法识别 qwen2.5vl 这类不支持工具的模型）
+                        let overrides = fetch_tool_capability_overrides(&client, &base_url, &req.api_key).await;
+                        for m in &mut models {
+                            if let Some(id) = m.get("id").and_then(|v| v.as_str()).map(str::to_string) {
+                                if let Some(sfc) = overrides.get(&id) {
+                                    m["fc"] = serde_json::json!(*sfc);
+                                }
+                            }
+                        }
                         return Ok(Json(json!({ "models": models })));
                     }
                     last_err = Some("接口返回了空模型列表，可能该服务不支持 /models 查询".into());
