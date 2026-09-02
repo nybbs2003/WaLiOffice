@@ -476,16 +476,34 @@ export function SettingsDialog({ open, settings, onClose, onSave }: SettingsDial
                       <option key={profile.id} value={profile.id}>{profile.name}</option>
                     ))}
                   </select>
-                  <select
-                    value={draft.active_model}
-                    onChange={(event) => updateDraft({ active_model: event.target.value, default_model: event.target.value })}
-                    className="rounded-2xl border border-black/10 bg-white px-3 py-2.5 text-sm outline-none focus:border-surface-500"
-                  >
-                    {[...(activeProfile?.models || [])].sort((a, b) => a.localeCompare(b, 'en')).map((model) => (
-                      <option key={model} value={model}>{model}</option>
-                    ))}
-                  </select>
+                  <div className="flex items-center gap-2">
+                    <select
+                      value={draft.active_model}
+                      onChange={(event) => updateDraft({ active_model: event.target.value, default_model: event.target.value })}
+                      className="min-w-0 flex-1 rounded-2xl border border-black/10 bg-white px-3 py-2.5 font-mono text-sm outline-none focus:border-surface-500"
+                    >
+                      {(fetchedModelsMap[activeProfile?.id || ''] && fetchedModelsMap[activeProfile?.id || ''].length > 0
+                        ? fetchedModelsMap[activeProfile?.id || ''].filter((i) => !i.disabled).map((i) => i.id)
+                        : (activeProfile?.models && activeProfile.models.length > 0 ? activeProfile.models : [''])
+                      ).slice().sort((a, b) => a.localeCompare(b, 'en')).map((model) => (
+                        <option key={model} value={model}>{model}</option>
+                      ))}
+                    </select>
+                    <button
+                      type="button"
+                      onClick={() => activeProfile && testLlmCapability(activeProfile)}
+                      disabled={testingLlmProfile === activeProfile?.id}
+                      className="shrink-0 rounded-2xl border border-surface-300 bg-white px-4 py-2.5 text-sm font-semibold text-surface-700 transition hover:bg-surface-50 disabled:cursor-not-allowed disabled:opacity-50"
+                    >
+                      {testingLlmProfile === activeProfile?.id ? '检测中...' : '检测能力'}
+                    </button>
+                  </div>
                 </div>
+                {activeProfile && llmTestResult[activeProfile.id] && (
+                  <div className={`mt-3 rounded-lg px-3 py-2 text-sm break-all whitespace-pre-wrap leading-relaxed ${llmTestResult[activeProfile.id]!.ok ? 'bg-emerald-50 text-emerald-700' : 'bg-red-50 text-red-600'}`}>
+                    {llmTestResult[activeProfile.id]!.message}
+                  </div>
+                )}
               </div>
 
               <div className="grid gap-4 xl:grid-cols-2">
